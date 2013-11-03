@@ -1,0 +1,2134 @@
+;; -*- Lisp -*-
+;; file xtramelt-ana-base.melt
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(comment "***
+    Copyright 2008 - 2013 Free Software Foundation, Inc.
+    Contributed by Basile Starynkevitch <basile@starynkevitch.net>
+                and Jeremie Salvucci  <jeremie.salvucci@free.fr>
+                and Pierre Vittet  <piervit@pvittet.com>
+                and Romain Geissler  <romain.geissler@gmail.com>
+
+    This file xtramelt-ana-base.{melt,c} is part of GCC.
+
+    GCC is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 3, or (at your option)
+    any later version.
+
+    GCC is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with GCC; see the file COPYING3.  If not see
+    <http://www.gnu.org/licenses/>.
+***")
+
+;; the copyright notice above apply both to xtramelt-ana-base.melt and 
+;; to the generated file  xtramelt-ana-base*.c
+
+;; This file has been split, with large parts moved into
+;; xtramelt-ana-tree.melt & xtramelt-ana-gimple.melt after svn rev
+;; 186705 ie MELT version 0.9.5 (april 24th, 2012).
+
+;; a class containing the analysis state
+(defclass class_analysis_state
+  :doc #{A class containing some analysis state, to be subclassed.}#
+  :super class_proped
+  :fields (
+))
+
+(defprimitive main_input_filename () :cstring
+  :doc #{The main input file name given to GCC thru $MAIN_INPUT_FILENAME}#
+  #{ main_input_filename }#)
+  
+
+
+
+;;;;;;;;;;;;;;;;
+(cheader 
+ #{
+MELT_EXTERN bool melthk_gimple_gate(void) MELT_MODULE_VISIBILITY;
+MELT_EXTERN unsigned int melthk_gimple_execute(void) MELT_MODULE_VISIBILITY;
+MELT_EXTERN unsigned int melthk_simple_ipa_execute(void) MELT_MODULE_VISIBILITY;
+MELT_EXTERN bool melthk_rtl_gate(void) MELT_MODULE_VISIBILITY;
+MELT_EXTERN unsigned int melthk_rtl_execute(void) MELT_MODULE_VISIBILITY;
+
+#if GCCPLUGIN_VERSION >= 4009 || MELT_GCC_VERSION >= 4009 /* GCC 4.9 and later have classes for passes */
+
+class melt_gimple_pass : public gimple_opt_pass {
+  long _instance_index;
+public:
+  long index () const { return _instance_index; };
+  melt_gimple_pass (const pass_data& passdata, gcc::context*ctxt) 
+    : gimple_opt_pass (passdata, ctxt), _instance_index(++melt_pass_instance_counter) {};
+  virtual ~melt_gimple_pass() { _instance_index=0; };
+  bool gate () { 
+    bool fla;
+    long oldindex = melt_current_pass_index_var;
+    melt_current_pass_index_var = index ();
+    fla = melthk_gimple_gate(); 
+    melt_current_pass_index_var = oldindex;
+    return fla;
+ };
+  unsigned execute () { 
+    unsigned r = 0;
+    long oldindex = melt_current_pass_index_var;
+    melt_current_pass_index_var = index ();
+    r = melthk_gimple_execute(); 
+    melt_current_pass_index_var = oldindex;
+    return r;
+  };
+  opt_pass* clone () { 
+    melt_gimple_pass *p = new melt_gimple_pass(*this); 
+    p->_instance_index = ++melt_pass_instance_counter;
+    return p;
+  };
+}; // end of melt_gimple_pass class
+
+class melt_simple_ipa_pass : public simple_ipa_opt_pass {
+  long _simpleipa_instance_index;
+public:
+  long index () const { return _simpleipa_instance_index; };
+   melt_simple_ipa_pass (const pass_data& passdata, gcc::context*ctxt) 
+    : simple_ipa_opt_pass(passdata, ctxt),  _simpleipa_instance_index(++melt_pass_instance_counter) {};
+  virtual ~melt_simple_ipa_pass() { _simpleipa_instance_index=0; };
+   unsigned int execute () 
+    {
+      unsigned r = 0;
+      long oldindex = melt_current_pass_index_var;
+      melt_current_pass_index_var = index ();
+      r = melthk_simple_ipa_execute(); 
+      melt_current_pass_index_var = oldindex;
+      return r;
+    };
+  opt_pass* clone () { 
+    melt_simple_ipa_pass *p = new melt_simple_ipa_pass(*this); 
+    p->_simpleipa_instance_index = ++melt_pass_instance_counter;
+    return p;
+  };
+}; // end of melt_simple_ipa_pass class
+
+static inline long melt_get_current_pass_index (void) {
+   return current_pass?melt_current_pass_index_var:0L;
+}
+
+#endif /* GCC 4.9 or newer */
+
+}#)
+
+(cimplement 
+ #{
+ 
+/* implementation of wrapping gate and exec functions from xtramelt-ana-base.melt */
+bool melthk_gimple_gate(void)
+{ 
+  debugeprintf("melthk_gimple_gate start");
+  return melthookproc_HOOK_GIMPLE_GATE () != 0L; 
+}
+
+unsigned int melthk_gimple_execute(void) 
+{
+  debugeprintf("melthk_gimple_execute start");
+  return (unsigned) melthookproc_HOOK_GIMPLE_EXECUTE (); 
+}
+
+
+unsigned int melthk_simple_ipa_execute(void) 
+{return (unsigned) melthookproc_HOOK_SIMPLE_IPA_EXECUTE (); }
+
+bool melthk_rtl_gate(void)
+{ return melthookproc_HOOK_RTL_GATE () != 0L; }
+
+unsigned int melthk_rtl_execute(void) 
+{return (unsigned) melthookproc_HOOK_RTL_EXECUTE (); }
+
+}#)
+
+
+
+;; new function to install a melt pass in gcc
+(defun install_melt_pass_in_gcc 
+  (:value pass positioning refpassname :long refpassnum) 
+  :doc #{$INSTALL_MELT_PASS_IN_GCC is nstalling your GCC pass coded in
+  MELT. The $PASS should be an object, instance of a sub-class of
+  $CLASS_GCC_PASS, e.g. of $CLASS_GCC_GIMPLE_PASS. The $POSITIONNING
+  is :before or :after or :replace. The reference pass is given thru $REFPASSNAME
+  -a boxed string- and $REFPASSNUM. Usually $INSTALL_MELT_PASS_IN_GCC is
+  called from a mode initializer.}#
+  (debug "install_melt_gcc_pass pass=" pass 
+	 " positioning=" positioning " refpassname=" refpassname " refpassnum=" refpassnum)
+  ;; check that we have a mode
+  (let ( (:long badmodeflag 0)
+	 (passname (get_field :named_name pass))
+	 )
+    (code_chunk badmode_chk
+       #{/*install_melt_gcc_pass $BADMODE_CHK */
+         const char* modstr = melt_argument("mode");
+	 if (!modstr || !modstr[0])
+           $BADMODEFLAG = 1;
+	   }#)
+    (when (not (is_string passname))
+      (error_at () "MELT corrupted nameless pass to install")
+      (return))
+    (when badmodeflag 
+      (warning_at () "MELT does not install pass $1 without a mode" passname)
+      (return)) 
+  ;;; check the pass
+  (when (is_not_a pass class_gcc_pass)
+    (error_at () "MELT bad pass $1 to install" passname)
+    (return))
+  (let ( (passdict (get_field :sysdata_pass_dict initial_system_data))
+	 )
+  ;; check the refpassname
+    (when (not (is_string refpassname))
+      (error_at () "cannot install MELT pass $1 without reference pass name" passname)
+      (return))
+  ;; check that the pass is not already installed
+    (when (mapstring_getstr passdict passname)
+      (error_at () "MELT pass of same name $1 already installed" passname)
+      (return)
+      )
+    (let (
+	  (propreqv (get_field :gccpass_properties_required pass))
+	  (propprov (get_field :gccpass_properties_provided pass))
+	  (propdestrv (get_field :gccpass_properties_destroyed pass))
+	  (todostartv (get_field :gccpass_todo_flags_start pass))
+	  (todofinishv (get_field :gccpass_todo_flags_finish pass))
+	  (gatefun (get_field :gccpass_gate pass))
+	  (execfun (get_field :gccpass_exec pass))
+	  (:long posopl 
+		 (match positioning
+			(:before 
+			 (expr_chunk before_chk :long #{(long)PASS_POS_INSERT_BEFORE}#))
+			(:after
+			 (expr_chunk after_chk :long #{(long)PASS_POS_INSERT_AFTER}#))
+			(:replace
+			 (expr_chunk replace_chk :long #{(long)PASS_POS_REPLACE}#))
+			(?_
+			 (errormsg_strv "bad pass positioning; should be :BEFORE or :AFTER or :REPLACE"
+					passname)
+			 (return)
+			 -1
+			 )))
+	  )
+      (cond 
+       ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+       ;; installing gimple passes
+       ((is_a pass class_gcc_gimple_pass)
+	(code_chunk 
+	 gimplepass_chk
+	 #{ /* start install_melt_gcc_pass $GIMPLEPASS_CHK */
+#if GCCPLUGIN_VERSION <= 4008 &&  MELT_GCC_VERSION <= 4008 /* GCC 4.7 or 4.8 */
+	 struct gimple_opt_pass* gimpass = NULL;
+	 struct register_pass_info rpassinfo;
+	 memset (&rpassinfo, 0, sizeof(rpassinfo));
+	 gimpass = XNEW(struct gimple_opt_pass);
+	 memset(gimpass, 0, sizeof(struct gimple_opt_pass));
+	 gimpass->pass.type = GIMPLE_PASS;
+	 gimpass->pass.name = 
+	   melt_intern_cstring (melt_string_str((melt_ptr_t) $PASSNAME));
+	 gimpass->pass.gate = ($GATEFUN != NULL)?melthk_gimple_gate:NULL;
+	 gimpass->pass.execute = melthk_gimple_execute;
+	 gimpass->pass.tv_id = TV_PLUGIN_RUN;
+	 gimpass->pass.properties_required = melt_val2passflag ((melt_ptr_t) $PROPREQV);
+	 gimpass->pass.properties_provided = melt_val2passflag ((melt_ptr_t) $PROPPROV);
+	 gimpass->pass.properties_destroyed = melt_val2passflag ((melt_ptr_t) $PROPDESTRV);
+	 gimpass->pass.todo_flags_start = melt_val2passflag ((melt_ptr_t) $TODOSTARTV);
+	 gimpass->pass.todo_flags_finish = melt_val2passflag ((melt_ptr_t) $TODOFINISHV);
+	 rpassinfo.pass = (struct opt_pass*) gimpass;
+	 rpassinfo.reference_pass_name = 
+	   melt_intern_cstring (melt_string_str((melt_ptr_t) $REFPASSNAME));
+	 rpassinfo.ref_pass_instance_number = $REFPASSNUM;
+	 rpassinfo.pos_op = (enum pass_positioning_ops)$POSOPL;
+	 debugeprintf("installing MELT gimple new pass named %s w.r.t %s", 
+		      gimpass->pass.name, rpassinfo.reference_pass_name);
+	 register_callback (melt_plugin_name, PLUGIN_PASS_MANAGER_SETUP,
+			    NULL, &rpassinfo);
+#else /* GCC 4.9 or newer has C++ passes */
+	 struct register_pass_info rpassinfo;
+	 memset (&rpassinfo, 0, sizeof(rpassinfo));
+	 struct pass_data rpassdata;
+	 memset (&rpassdata, 0, sizeof(rpassdata));
+	 rpassdata.type = GIMPLE_PASS;
+	 rpassdata.name = melt_intern_cstring (melt_string_str((melt_ptr_t) $PASSNAME));
+	 rpassdata.optinfo_flags = OPTGROUP_NONE;
+	 rpassdata.has_gate = ($GATEFUN != NULL);
+	 rpassdata.has_execute = true;
+	 rpassdata.tv_id = TV_PLUGIN_RUN;
+	 rpassdata.properties_required = melt_val2passflag ((melt_ptr_t) $PROPREQV);
+	 rpassdata.properties_provided = melt_val2passflag ((melt_ptr_t) $PROPPROV);
+	 rpassdata.properties_destroyed = melt_val2passflag ((melt_ptr_t) $PROPDESTRV);
+	 rpassdata.todo_flags_start = melt_val2passflag ((melt_ptr_t) $TODOSTARTV);
+	 rpassdata.todo_flags_finish = melt_val2passflag ((melt_ptr_t) $TODOFINISHV);
+	 rpassinfo.pass = new melt_gimple_pass (rpassdata, g); // the g is from context.h
+	 rpassinfo.reference_pass_name = 
+	   melt_intern_cstring (melt_string_str((melt_ptr_t) $REFPASSNAME));
+	 melt_intern_cstring (melt_string_str((melt_ptr_t) $REFPASSNAME));
+	 rpassinfo.ref_pass_instance_number = $REFPASSNUM;
+	 rpassinfo.pos_op = (enum pass_positioning_ops)$POSOPL;
+	 debugeprintf("installing MELT gimple classy pass named %s w.r.t. %s", 
+		      rpassdata.name,  rpassinfo.reference_pass_name);
+	 register_callback (melt_plugin_name, PLUGIN_PASS_MANAGER_SETUP,
+			    NULL, &rpassinfo);
+	 debugeprintf("installed MELT gimple classy pass named %s", 
+		      rpassdata.name);
+#endif /* GCC 4.9 */
+	 /* end install_melt_gcc_pass $GIMPLEPASS_CHK */
+	 }#)
+	(mapstring_putstr passdict passname pass)
+	(debug "install_melt_pass_in_gcc installed gimple pass=" pass)
+	)
+       ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+       ;; installing simple_ipa passes
+       ((is_a pass class_gcc_simple_ipa_pass)
+	(if gatefun 
+	    (error_at () "MELT simple ipa pass $1 should not have any gate function" passname))
+	(code_chunk 
+	 simipapass_chk
+	 #{ /* start install_melt_gcc_pass $SIMIPAPASS_CHK */
+#if GCCPLUGIN_VERSION <= 4008  &&  MELT_GCC_VERSION <= 4008 /* GCC 4.7 or 4.8 */
+	 struct simple_ipa_opt_pass* simipass = NULL;
+	 struct register_pass_info rpassinfo;
+	 memset (&rpassinfo, 0, sizeof(rpassinfo));
+	 simipass = XNEW(struct simple_ipa_opt_pass);
+	 memset(simipass, 0, sizeof(struct simple_ipa_opt_pass));
+	 simipass->pass.type = SIMPLE_IPA_PASS;
+	 simipass->pass.name = 
+	   melt_intern_cstring (melt_string_str((melt_ptr_t) $PASSNAME));
+	 simipass->pass.gate = NULL;
+	 simipass->pass.execute = melthk_simple_ipa_execute;
+	 simipass->pass.tv_id = TV_PLUGIN_RUN;
+	 simipass->pass.properties_required = melt_val2passflag ((melt_ptr_t) $PROPREQV);
+	 simipass->pass.properties_provided = melt_val2passflag ((melt_ptr_t) $PROPPROV);
+	 simipass->pass.properties_destroyed = melt_val2passflag ((melt_ptr_t) $PROPDESTRV);
+	 simipass->pass.todo_flags_start = melt_val2passflag ((melt_ptr_t) $TODOSTARTV);
+	 simipass->pass.todo_flags_finish = melt_val2passflag ((melt_ptr_t) $TODOFINISHV);
+	 rpassinfo.pass = (struct opt_pass*) simipass;
+	 rpassinfo.reference_pass_name = 
+	    melt_intern_cstring (melt_string_str((melt_ptr_t) $REFPASSNAME));
+	 rpassinfo.ref_pass_instance_number = $REFPASSNUM;
+	 rpassinfo.pos_op = (enum pass_positioning_ops)$POSOPL;
+	 debugeprintf("installing MELT simple_ipa pass named %s w.r.t %s", 
+		      simipass->pass.name, rpassinfo.reference_pass_name);
+	 register_callback (melt_plugin_name, PLUGIN_PASS_MANAGER_SETUP,
+			    NULL, &rpassinfo);
+	 debugeprintf("installed MELT simple_ipa pass named %s",
+		      simipass->pass.name);
+#else /* GCC >= 4.9 */
+	 struct register_pass_info rpassinfo;
+	 memset (&rpassinfo, 0, sizeof(rpassinfo));
+	 struct pass_data rpassdata;
+	 memset (&rpassdata, 0, sizeof(rpassdata));
+	 rpassdata.type = SIMPLE_IPA_PASS;
+	 rpassdata.name = melt_intern_cstring (melt_string_str((melt_ptr_t) $PASSNAME));
+	 rpassdata.optinfo_flags = OPTGROUP_NONE;
+	 rpassdata.has_gate = false;
+	 rpassdata.has_execute = true;
+	 rpassdata.tv_id = TV_PLUGIN_RUN;
+	 rpassdata.properties_required = melt_val2passflag ((melt_ptr_t) $PROPREQV);
+	 rpassdata.properties_provided = melt_val2passflag ((melt_ptr_t) $PROPPROV);
+	 rpassdata.properties_destroyed = melt_val2passflag ((melt_ptr_t) $PROPDESTRV);
+	 rpassdata.todo_flags_start = melt_val2passflag ((melt_ptr_t) $TODOSTARTV);
+	 rpassdata.todo_flags_finish = melt_val2passflag ((melt_ptr_t) $TODOFINISHV);
+	 rpassinfo.pass = new melt_simple_ipa_pass (rpassdata, g); // the g is from context.h
+	 rpassinfo.reference_pass_name = 
+	   melt_intern_cstring (melt_string_str((melt_ptr_t) $REFPASSNAME));
+	 melt_intern_cstring (melt_string_str((melt_ptr_t) $REFPASSNAME));
+	 rpassinfo.ref_pass_instance_number = $REFPASSNUM;
+	 rpassinfo.pos_op = (enum pass_positioning_ops)$POSOPL;
+	 debugeprintf("installing MELT simple_ipa classy pass named %s w.r.t %s", 
+		      rpassdata.name, rpassinfo.reference_pass_name);
+	 register_callback (melt_plugin_name, PLUGIN_PASS_MANAGER_SETUP,
+			    NULL, &rpassinfo);
+	 debugeprintf("installed MELT simple_ipa classy pass named %s", 
+		      rpassdata.name);
+#endif /* GCC 4.9 or better */
+	 /* end install_melt_gcc_pass $SIMIPAPASS_CHK */
+	 }#)
+	(debug "install_melt_pass_in_gcc installed simple ipa pass=" pass)
+	(mapstring_putstr passdict passname pass)
+	)
+       ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+       ;; installing rtl passes
+       ((is_a pass class_gcc_rtl_pass)
+	(code_chunk 
+	 rtlpass_chk
+	 #{ /* start install_melt_gcc_pass $RTLPASS_CHK */
+#if GCCPLUGIN_VERSION <= 4008 &&  MELT_GCC_VERSION <= 4008 /* GCC 4.7 or 4.8 */
+	 struct rtl_opt_pass* rtlpass = NULL;
+	 struct register_pass_info rpassinfo;
+	 memset (&rpassinfo, 0, sizeof(rpassinfo));
+	 rtlpass = XNEW(struct rtl_opt_pass);
+	 memset(rtlpass, 0, sizeof(struct simple_ipa_opt_pass));
+	 rtlpass->pass.type = RTL_PASS;
+	 rtlpass->pass.name = 
+	   melt_intern_cstring (melt_string_str((melt_ptr_t) $PASSNAME));
+	 rtlpass->pass.gate = ($GATEFUN != NULL)?melthk_rtl_gate:NULL;
+	 rtlpass->pass.execute = melthk_rtl_execute;
+	 rtlpass->pass.tv_id = TV_PLUGIN_RUN;
+	 rtlpass->pass.properties_required = melt_val2passflag ((melt_ptr_t) $PROPREQV);
+	 rtlpass->pass.properties_provided = melt_val2passflag ((melt_ptr_t) $PROPPROV);
+	 rtlpass->pass.properties_destroyed = melt_val2passflag ((melt_ptr_t) $PROPDESTRV);
+	 rtlpass->pass.todo_flags_start = melt_val2passflag ((melt_ptr_t) $TODOSTARTV);
+	 rtlpass->pass.todo_flags_finish = melt_val2passflag ((melt_ptr_t) $TODOFINISHV);
+	 rpassinfo.pass = (struct opt_pass*) rtlpass;
+	 rpassinfo.reference_pass_name = 
+	 melt_intern_cstring (melt_string_str((melt_ptr_t) $REFPASSNAME));
+	 rpassinfo.ref_pass_instance_number = $REFPASSNUM;
+	 rpassinfo.pos_op = (enum pass_positioning_ops)$POSOPL;
+	 debugeprintf("installing MELT rtl pass named %s", rtlpass->pass.name);
+	 register_callback (melt_plugin_name, PLUGIN_PASS_MANAGER_SETUP,
+			    NULL, &rpassinfo);
+#else /* GCC >= 4.9 */
+#warning install_melt_gcc_pass $RTLPASS_CHK not implemented for class_gcc_rtl_pass
+         melt_fatal_error ("install_melt_gcc_pass unimplemented for MELT pass %s (RTL)",
+			   melt_string_str((melt_ptr_t) $PASSNAME));
+#endif /* GCC 4.9 or better */
+	 /* end install_melt_gcc_pass $RTLPASS_CHK */
+	 }#)
+	(debug "install_melt_pass_in_gcc installed simple ipa pass=" pass)
+	(mapstring_putstr passdict passname pass)
+	)
+       ;;
+       (:else
+	(error_at () 
+		  "MELT failed to install pass $1 of unexpected class" passname
+		  (get_field :named_name (discrim pass)))
+	(return)
+	)
+       )	     
+    )
+    (debug "install_melt_pass_in_gcc end pass=" pass "\n ... updated passdict=" passdict)
+    )))					;end install_melt_pass_in_gcc
+
+
+;;;;;;;;;;;;;;;;;;;;;; obsolete install a MELT GCC PASS; for compatibility
+(defun install_melt_gcc_pass  
+   (:value pass :cstring positioning refpassname :long refpassnum) 
+   :doc #{@b{Obsolete function} to install a GCC pass coded in MELT,
+  replaced with $INSTALL_MELT_PASS_IN_GCC. The $PASS should be an
+  object, instance of a sub-class of $CLASS_GCC_PASS, e.g. of
+  $CLASS_GCC_GIMPLE_PASS. The $POSITIONNING is "before" or "after"
+  or "replace". The reference pass is given thru $REFPASSNAME and
+  $REFPASSNUM. Usually $INSTALL_MELT_GCC_PASS is called from a mode
+  initializer.}# 
+  (debug "install_melt_gcc_pass pass=" pass " positioning=" positioning 
+	 "refpassname=" refpassname " refpassnum=" refpassnum)
+  (shortbacktrace_dbg "install_melt_gcc_pass" 15)
+  (let ( (positv ())
+	 (refpanamv ())
+	 (passname (get_field :named_name pass))
+	 )
+    (code_chunk makeval_chk 
+		#{ /* install_melt_gcc_pass $MAKEVAL_CHK start */
+		warning (0, "MELT obsolete usage of INSTALL_MELT_GCC_PASS for %s."
+			    " Use INSTALL_MELT_PASS_IN_GCC instead.",
+			    melt_string_str ($PASSNAME));
+		$POSITV = melthookproc_HOOK_NAMED_KEYWORD ($POSITIONING, (long) MELT_CREATE);
+		$REFPANAMV = meltgc_new_stringdup ((meltobject_ptr_t) MELT_PREDEF(DISCR_STRING),
+						   $POSITIONING);
+		 /* install_melt_gcc_pass $MAKEVAL_CHK end */ }#)
+    (debug "install_melt_gcc_pass pass=" pass " positv=" positv " refpanamv=" refpanamv 
+	   " refpassnum=" refpassnum)
+    (install_melt_pass_in_gcc pass positv refpanamv refpassnum)
+    (return ())
+    )
+)
+
+
+;;; edge related primitives
+(defprimitive make_edge (discr :edge edg) :value
+  :doc #{Box the edge stuff $EDG with discriminant $DISCR as a boxed edge value.}#
+  #{(meltgc_new_edge((meltobject_ptr_t)($DISCR),($EDG)))}# )
+
+(defprimitive edge_content (val) :edge
+  :doc #{Retrieve the edge stuff from boxed edge value $VAL.}#
+  #{(melt_edge_content((melt_ptr_t)($VAL)))}# )
+
+(defprimitive is_edge (val) :long
+  :doc #{Test that $VAL is indeed a boxed edge value.}#
+  #{(($VAL) && melt_magic_discr ((melt_ptr_t)$VAL) == MELTOBMAG_EDGE)}#)
+
+(defprimitive ==e (:edge e1 e2) :long
+  :doc #{Test physical equality, that is identity, of edge stuff $E1 and $E2.}#
+  #{(($E1) == ($E2))}#)
+
+(defprimitive null_edge () :edge
+  :doc #{The null edge stuff.}#
+   #{((edge)0)}#)
+
+
+;;;;;;;;;;;;;;;; map associating GCC edge-s to non-null MELT values
+(defprimitive is_mapedge (map) :long
+  :doc #{Test if $MAP is a map keyed by edges.}#
+  #{ (melt_magic_discr((melt_ptr_t)($map)) == MELTOBMAG_MAPEDGES) }#)
+(defprimitive mapedge_size (map) :long
+  :doc #{Get the allocated size of an edge map $MAP.}#
+ #{ (melt_size_mapedges((struct meltmapedges_st*)($map))) }#)
+;; primitive to get the attribute count of a mapedge
+(defprimitive mapedge_count (map) :long
+  :doc #{Get the counted length of an edge map $MAP.}#
+  #{ (melt_count_mapedges((struct meltmapedges_st*)($map))) }# )
+;; get an entry in a mapedge from a C edge
+(defprimitive mapedge_get (map :edge ed) :value
+  :doc #{Get the value in edge map $MAP associted to edge $ED.}#
+  #{(melt_get_mapedges((melt_ptr_t) ($MAP), ($ED)))}#)
+;; primitive for making a new map of edges
+(defprimitive make_mapedge (discr :long len) :value
+  :doc #{Make a new map of edges with $DISCR and initial $LEN.}#
+ #{(meltgc_new_mapedges((meltobject_ptr_t) ($discr), ($len)))}#)
+;; primitive for putting into a map of edges
+(defprimitive mapedge_put (map :edge ekey :value val) :void
+  :doc #{Safely put into map $MAP the edge $EKEY associated to value $VAL.}#
+  #{melt_put_mapedges((melt_ptr_t) ($MAP), 
+		      ($EKEY), (melt_ptr_t) ($VAL))}#)
+;; primitive for removing from a map of edges
+(defprimitive mapedge_remove (map :edge key) :void
+  :doc #{Safely remove in map $MAP the entry for edge $EKEY.}#
+  #{melt_remove_mapedges((melt_ptr_t)($MAP), ($KEY))}#)
+;; retrieve the auxiliary data in a map of edges
+(defprimitive mapedge_aux (map) :value
+  :doc #{Retrieve the auxiliary data of edge map $MAP.}#
+  #{melt_auxdata_mapedges ((melt_ptr_t)$MAP)}#)
+;; put the auxiliary data in a map of edges
+(defprimitive mapedge_auxput (map aux) :void
+  :doc #{Put the auxiliary data of edge map $MAP as $AUX.}#
+  #{melt_auxput_mapedges((melt_ptr_t)$MAP, (melt_ptr_t)$AUX)}#)
+
+;; primitive to get the nth edge of a mapedge
+(defprimitive mapedge_nth_attr (map :long n) :edge
+  #{(melt_nthattr_mapedges((struct meltmapedges_st*)($map), (int)($n)))}#)
+;; primitive to get the nth value of a mapedge
+(defprimitive mapedge_nth_val (map :long n) :value
+  #{(melt_nthval_mapedges((struct meltmapedges_st*)($map), (int)($n)))}# )
+;; iterator inside mapedge
+(defciterator foreach_mapedge 
+  (edgmap)				; startformals
+  eachedgemap 				;state symbol
+  (:edge att :value val)	;local formals
+  ;; before expansion
+  #{
+   /* foreach_mapedge $EACHEDGEMAP*/ { int $EACHEDGEMAP#_rk=0;
+   for ($EACHEDGEMAP#_rk=0;
+        $EACHEDGEMAP#_rk< (int) melt_size_mapedges((struct meltmapedges_st*)($EDGMAP));
+	$EACHEDGEMAP#_rk++) {
+   edge $EACHEDGEMAP#_ed = ((struct meltmapedges_st*)($EDGMAP))->entab[$EACHEDGEMAP#_rk].e_at;
+   $ATT = NULL;
+   $VAL = NULL;
+   if (!$EACHEDGEMAP#_ed 
+       || (void*) $EACHEDGEMAP#_ed == (void*) HTAB_DELETED_ENTRY) 
+     continue;
+   $ATT = $EACHEDGEMAP#_ed;
+   $VAL = ((struct meltmapedges_st*)($EDGMAP))->entab[$EACHEDGEMAP#_rk].e_va;
+   }#
+  ;;after expansion
+   #{
+   } } /*end foreach_mapedge $EACHEDGEMAP*/
+   $ATT = NULL;
+   $VAL = NULL;
+   }#
+  )
+
+;;;;;;;;;;;;;;;; map associating GCC loop-s to non-null MELT values
+(defprimitive is_maploop (map) :long
+  :doc #{Test if $MAP is a map of loops.}#
+  #{ (melt_magic_discr((melt_ptr_t)($map)) == MELTOBMAG_MAPLOOPS) }#)
+
+(defprimitive maploop_size (map) :long
+  :doc #{Return allocated size of loop map $MAP.}#
+ #{ (melt_size_maploops((struct meltmaploops_st*)($map))) }#)
+
+;; primitive to get the attribute count of a maploop
+(defprimitive maploop_count (map) :long
+  :doc #{Return used count of loop map $MAP.}#
+  #{ (melt_count_maploops((struct meltmaploops_st*)($map))) }# )
+
+;; get an entry in a maploop from a C loop
+(defprimitive maploop_get (map :loop lo) :value
+  :doc #{Safely get in $MAP value associated to loop $LO.}#
+  #{(melt_get_maploops((melt_ptr_t) ($map), ($lo)))}#)
+
+;; primitive for making a new map of loops
+(defprimitive make_maploop (discr :long len) :value
+  :doc #{Make a map of loops with given $DISCR and estimated $LEN.}#
+ #{(meltgc_new_maploops((meltobject_ptr_t) ($discr), ($len)))}#)
+
+;; primitive for putting into a map of loops
+(defprimitive maploop_put (map :loop keylo :value val) :void
+  :doc #{Safely put in $MAP loop $KEYLO associated to $VAL.}#
+  #{melt_put_maploops((melt_ptr_t) ($MAP), 
+		      ($KEYLO), (melt_ptr_t) ($VAL))}#)
+
+;; primitive for removing from a map of loops
+(defprimitive maploop_remove (map :loop keylo) :void
+  :doc #{Safely remove in $MAP entry for loop $KEYLO}#
+  #{melt_remove_maploops((melt_ptr_t) ($MAP), ($KEYLO))}#)
+
+;; primitive to get the nth loop of a maploop
+(defprimitive maploop_nth_attr (map :long n) :loop
+  :doc #{Safely retrieve the in map of loops $MAP the $N loop key}#
+  #{(melt_nthattr_maploops((struct meltmaploops_st*)($MAP), (int)($N)))}#)
+
+;; primitive to get the nth value of a maploop
+(defprimitive maploop_nth_val (map :long n) :value
+  :doc #{Safely retrieve the in map of loops $MAP the $N value}#
+  #{(melt_nthval_maploops((struct meltmaploops_st*)($MAP), (int)($N)))}# )
+
+;; iterator inside maploop
+(defciterator foreach_maploop 
+  (loomap)				; startformals
+  eachloomap 				;state symbol
+  (:loop loatt :value val)	;local formals
+  :doc #{Iterate inside map of loops $LOOMAP for each loop key $LOATT and value $VAL.}#
+  ;; before expansion
+  #{ /* foreach_maploop $EACHLOOMAP*/ { int $EACHLOOMAP#_rk=0;
+   for ($EACHLOOMAP#_rk=0;
+        $EACHLOOMAP#_rk < (int) melt_size_maploops((struct meltmaploops_st*)($LOOMAP));
+	$EACHLOOMAP#_rk++) {
+   $LOATT = NULL;
+   $VAL = NULL;
+   loop_p $EACHLOOMAP#_lo = 
+     ((struct meltmaploops_st*)($LOOMAP))->entab[$EACHLOOMAP#_rk].e_at;
+   if (!$EACHLOOMAP#_lo
+       || (void*) $EACHLOOMAP#_lo == (void*) HTAB_DELETED_ENTRY) 
+     continue;
+   $LOATT = $EACHLOOMAP#_lo;
+   $VAL = 
+     ((struct meltmaploops_st*)($LOOMAP))->entab[$EACHLOOMAP#_rk].e_va;
+   }#
+  ;;after expansion
+   #{ 
+   } /*end  foreach_maploop $EACHLOOMAP*/
+   $LOATT = NULL;
+   $VAL = NULL; }
+   }#
+  )
+
+
+;; iterator on all the loops
+(defciterator each_loop
+  ()
+  eachloop
+  (:loop curloop :long loopix)
+  :doc #{Iterate on all loops $CURLOOP of index $LOOPIX.}#
+  ;; before expansion
+  #{ /* each_loop $EACHLOOP +*/ {
+   loop_iterator $EACHLOOP#_li;
+   FOR_EACH_LOOP($EACHLOOP#_li, $CURLOOP, 0) {
+     $LOOPIX = $CURLOOP->num;
+  }#
+  ;;after expansion
+   #{ } /*each_loop $EACHLOOP -*/ }
+   }#
+)
+
+
+
+(defprimitive loop_can_be_parallel (:loop lo) :long
+  :doc #{Test if loop $LO can be parallel, as detected by Graphite analysis.}#
+  #{ (($LO) && ($LO)->can_be_parallel) }#)
+
+(defprimitive loop_header (:loop lo) :basic_block
+  :doc #{The header if any of loop $LO}#
+  #{($LO)?(($LO)->header):(basic_block)0}#)
+
+(defprimitive loop_latch (:loop lo) :basic_block
+  :doc #{The latch if any of loop $LO}#
+  #{($LO)?(($LO)->latch):(basic_block)0}#)
+
+(defprimitive loop_inner (:loop lo) :loop
+  :doc #{The inner if any of loop $LO}#
+  #{($LO)?(($LO)->inner):(loop_p)NULL}#)
+
+(defprimitive loop_index_number (:loop lo) :long
+  :doc #{The index number if any of loop $LO}#
+  #{($LO)?(($LO)->num):0L}#)
+
+(defprimitive loop_depth (:loop lo) :long
+  :doc #{The depth of loop $LO}#
+  #{($LO)?loop_depth($LO):0L}#)
+
+(defprimitive number_of_loops () :long 
+  :doc #{Return the number of loops in current_loops.}#
+  #{ /* number_of_loops primitive */
+#if MELT_GCC_VERSION >= 4009 /* GCC 4.9 */
+  number_of_loops (cfun)
+#else /* GCC 4.7 or 4.8 */
+  number_of_loops ()
+#endif /*GCC 4.9*/
+  }#)
+
+(defprimitive superloop_at_depth (:loop lo :long depth) :loop
+  :doc #{Return the containing superloop of loop $LO at given $DEPTH or else null.}#
+  #{(($LO && $DEPTH>=0 && $DEPTH<=loop_depth ($LO))?superloop_at_depth($LO, $DEPTH):NULL)}#)
+
+(defciterator foreach_superloop
+  (:loop lo)
+  eachsuperloop
+  (:loop curloop :long loopix)
+  :doc #{Iterate of each superloop of given loop $LO, for each $CURLOOP of indec $LOOPIX.}#
+  ;; before expansion
+  #{ /* foreach_superloop $EACHSUPERLOOP */ 
+   unsigned $EACHSUPERLOOP#_ix = 0;
+   loop_p $EACHSUPERLOOP#_loop = NULL;
+   if ($LO) { 
+#if GCCPLUGIN_VERSION >= 4008 || MELT_GCC_VERSION >= 4008
+     FOR_EACH_VEC_SAFE_ELT ($LO->superloops, $EACHSUPERLOOP#_ix, 
+		       $EACHSUPERLOOP#_loop) 
+#else
+     FOR_EACH_VEC_ELT (loop_p, $LO->superloops, $EACHSUPERLOOP#_ix,  
+		       $EACHSUPERLOOP#_loop) 
+#endif
+       {
+       $LOOPIX = $EACHSUPERLOOP#_ix;
+       $CURLOOP = $EACHSUPERLOOP#_loop;
+  }#
+  ;; after expansion
+  #{ }} /* end $EACHSUPERLOOP */ }#
+)
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  
+(defprimitive is_basicblock (v) :long
+  :doc #{Test if $V is a boxed basic block value.}#
+ #{ (melt_magic_discr((melt_ptr_t)($v)) == MELTOBMAG_BASICBLOCK)}# )
+
+(defprimitive isnull_basicblock (:basic_block bb) :long
+  :doc #{Test if $BB is the null raw basic block.}#
+  #{($BB == (basic_block)0)}# )
+
+(defprimitive ==bb (:basic_block bb1 bb2) :long
+  :doc #{Identity [i.e. pointer equality] of raw basic_blocks.}#
+  #{ ($BB1) == ($BB2) }#)
+
+(defprimitive notnull_basicblock (:basic_block bb) :long
+  :doc #{Test if $BB is a real not null raw basic_block.}#
+ #{/* notnull_basicblock */ ($BB != (basic_block)0)}# )
+
+(defprimitive null_basicblock () :basic_block
+  :doc #{Gives the null raw basic_block pointer}#
+  #{/* null_basicblock */ ((basic_block)0)}#)
+
+(defprimitive basicblock_index (:basic_block bb) :long
+  :doc #{Gives the index of a basic block.}#
+  #{/* basicblock_index */ (($BB)?(($BB)->index):0L) }#)
+
+(defprimitive make_basicblock (discr :basic_block bb) :value
+  :doc #{Box with given $DISCR the raw basic_block $BB into a value.}#
+ #{/*make_basicblock*/(meltgc_new_basicblock((meltobject_ptr_t)($DISCR),($BB)))}# )
+
+(defprimitive basicblock_content (v) :basic_block
+  :doc #{Safely retrieve the raw basic_block inside value $V}#
+ #{(melt_basicblock_content ((melt_ptr_t)($V)))}# )
+
+(defprimitive basicblock_gimpleseq (v) :gimple_seq
+  :doc #{Safely retrieve the sequence of statements inside a boxed
+  basic block value $V.}#
+  #{(melt_basicblock_gimpleseq ((melt_ptr_t)($V)))}# )
+  
+(defprimitive basicblock_phinodes (v) :gimple_seq
+  :doc #{Safely retrieve the phinodes, if any, inside a boxed basic
+  block value $V.}# 
+  #{(melt_basicblock_phinodes ((melt_ptr_t)($V)))}# )
+
+(defprimitive ppstrbuf_gimple (sbuf :long indent :gimple g) :void
+  :doc #{Pretty-print inside strbuf $SBUF with indentation $INDENT the raw gimple $G.}#
+  #{ meltgc_ppstrbuf_gimple((melt_ptr_t)($sbuf), 
+			       (int) ($INDENT), ($G)) }# )
+
+(defprimitive ppstrbuf_gimple_seq (sbuf :long indent :gimple_seq gseq) :void
+  :doc #{Pretty-print inside strbuf $SBUF with indentation $INDENT the raw gimple_seq $GSEQ.}#
+  #{ meltgc_ppstrbuf_gimple_seq((melt_ptr_t)($SBUF),
+				   (int) ($INDENT), ($GSEQ)) }# )
+
+(defprimitive ppstrbuf_tree (sbuf :long indent :tree t) :void
+  :doc #{Pretty-print inside strbuf $SBUF with indentation $INDENT the raw tree $T.}#
+  #{ meltgc_ppstrbuf_tree((melt_ptr_t)($sbuf), 
+			     (int) ($INDENT), ($T)) }# )
+
+(defprimitive ppstrbuf_basicblock (sbuf :long indent :basic_block bb) :void
+  :doc #{Pretty-print inside strbuf $SBUF with indentation $INDENT the raw basic_block $BB.}#
+  #{ meltgc_ppstrbuf_basicblock((melt_ptr_t)($sbuf),
+				   (int) ($indent), ($bb)) }# )
+
+(defprimitive output_edge (out :edge edg) :void
+  :doc #{Output to $OUT the edge $EDG}#
+  #{ meltgc_out_edge((melt_ptr_t)($OUT), ($EDG)) }# )
+
+(defprimitive basicblock_single_succ (:basic_block bb) :basic_block
+  #{(($bb && single_succ_p($bb))?single_succ($bb):NULL)}# )
+
+(defprimitive basicblock_nb_succ (:basic_block bb) :long
+  #{(($bb)?EDGE_COUNT($bb->succs):0)}#)
+
+(defprimitive basicblock_nb_pred (:basic_block bb) :long
+  #{(($bb)?EDGE_COUNT($bb->preds):0)}#)
+
+(defprimitive basicblock_nth_succ_edge  (:basic_block bb :long ix) :edge
+  #{(($BB && $IX>=0 && $IX<EDGE_COUNT($BB->succs))?EDGE_SUCC($BB,$IX):NULL)}#)
+
+(defprimitive basicblock_nth_pred_edge  (:basic_block bb :long ix) :edge
+  #{(($BB && $IX>=0 && $IX<EDGE_COUNT($BB->preds))?EDGE_PRED($BB,$IX):NULL)}#)
+
+;; Primitives concerning dominance in basic_blocks
+;; those functions mainly come from gcc/dominance.c
+
+(defprimitive is_dominance_info_available () :long
+  :doc #{Check if dominance info are already calculated.
+        User normally doesn't have to call this primitive, as MELT functions
+        check if there is a need to use this.}#
+  #{dom_info_available_p(CDI_DOMINATORS)}#
+)
+
+(defprimitive is_post_dominance_info_available () :long
+  :doc #{Check if post dominance info are already calculated.
+        User normally doesn't have to call this primitive, as MELT functions
+        check if there is a need to use this.}#
+  #{dom_info_available_p(CDI_POST_DOMINATORS)}#
+)
+
+(defprimitive calculate_dominance_info_unsafe () :void
+  :doc #{This primitive is internally called, user doesn't need it.
+        Build the struct containing dominance info.
+        This struct is necessary to use others dominance related function.
+        This function is unsafe because it does not register any future call to
+        free_dominance_info.}#
+  #{calculate_dominance_info(CDI_DOMINATORS)}#
+)
+
+(defprimitive calculate_post_dominance_info_unsafe () :void
+  :doc #{This primitive is internally called, user doesn't need it.
+        Build the struct containing post dominance info.
+        This struct is necessary to use other dominance related function.
+        This function is unsafe because it does not register any future call to
+        free_dominance_info.}#
+  #{calculate_dominance_info(CDI_POST_DOMINATORS)}#
+)
+
+(defun free_dominance_info () 
+  (code_chunk freedominf_chk #{/* free_dominance_info $FREEDOMINF_CHK */ free_dominance_info(CDI_DOMINATORS)}#)
+)
+
+(defun free_post_dominance_info () 
+  (code_chunk freepostdominf_chk 
+  #{/* free_post_dominance_info $FREEPOSTDOMINF_CHK */ free_dominance_info(CDI_POST_DOMINATORS)}#)
+)
+
+(defun calculate_dominance_info ()
+  (if (is_dominance_info_available)
+    () ;; do nothing
+    (progn ;; else calculate dom and ask to free them at end of pass
+      (calculate_dominance_info_unsafe)
+      (at_end_of_this_melt_pass_last free_dominance_info))
+    ))
+
+
+(defun calculate_post_dominance_info () 
+  (if (is_post_dominance_info_available)
+    ()  ;; do nothing
+    (progn ;; else calculate dom and ask to free them at end of pass
+      (calculate_post_dominance_info_unsafe)
+      (at_end_of_this_melt_pass_last free_post_dominance_info))
+    ))
+
+
+(defprimitive debug_dominance_info (:cstring msg) :void
+  :doc #{Debug-print the dominance information.}#
+  ;; be careful to keep the __LINE__ on the first line of the macrostring.
+  #{ if (melt_flag_debug) { const int thislineno = __LINE__ ;
+       extern void debug_dominance_info (enum cdi_direction);
+       if (dom_info_available_p(CDI_DOMINATORS)) {
+         debugeprintflinenonl (thislineno,
+			       "debug_dominance_info %s", $MSG);
+         debug_dominance_info (CDI_DOMINATORS);
+       } 
+       else debugeprintfline (thislineno, 
+			      "debug_dominance_info %s not available", $MSG);
+     }}#
+)
+
+(defprimitive debug_post_dominance_info (:cstring msg) :void
+  :doc #{Debug-print the post dominance information.}#
+  ;; be careful to keep the __LINE__ on the first line of the macrostring.
+  #{ if (melt_flag_debug) { const int thislineno = __LINE__ ;
+       extern void debug_dominance_info (enum cdi_direction);
+       if (dom_info_available_p(CDI_POST_DOMINATORS)) {
+         debugeprintflinenonl (thislineno, 
+			       "debug_post_dominance_info %s", $MSG);
+         debug_dominance_info (CDI_POST_DOMINATORS);
+       } 
+       else debugeprintfline (thislineno,
+			      "debug_post_dominance_info %s not available", 
+			      $MSG);
+     }}#
+)
+
+(defprimitive get_immediate_dominator_unsafe (:basic_block bb) :basic_block
+  :doc#{It doesn't check that dominance info are build, use
+      get_immediate_dominator instead.}#
+  #{($bb) ? get_immediate_dominator (CDI_DOMINATORS, $bb) : NULL}#
+)
+
+(defun get_immediate_dominator (bb) 
+ :doc#{Return the next immediate dominator of the boxed basic_block $BB as a
+      MELT value.}#
+  (if (is_basicblock bb)
+  (progn
+    (calculate_dominance_info) 
+    (return (make_basicblock discr_basic_block 
+      (get_immediate_dominator_unsafe (basicblock_content bb))))))
+)
+
+(defprimitive get_immediate_post_dominator_unsafe (:basic_block bb) 
+  :basic_block
+  :doc#{It doesn't check that post_dominance info are build, use
+      get_immediate_post_dominator instead.}#
+  #{($bb) ? get_immediate_dominator (CDI_POST_DOMINATORS, $bb) : NULL}#
+)
+
+(defun get_immediate_post_dominator (bb)
+  :doc#{Return the next immediate post dominator of the boxed basic_block $BB as
+  a MELT value.}#
+  (if (is_basicblock bb)
+      (progn
+	(calculate_post_dominance_info) 
+	(return (make_basicblock discr_basic_block 
+				 (get_immediate_post_dominator_unsafe (basicblock_content bb))))))
+  )
+
+(defprimitive dominated_by_other_unsafe (:basic_block bba bbb) :long
+  :doc#{It doesn't check that dominance info is built, use
+  dominated_by_other instead.}#
+  #{ (($BBA) && ($BBB) && dominated_by_p (CDI_DOMINATORS, $BBA, $BBB)) }#
+  )
+
+(defun dominated_by_other (bbA bbB)
+  :doc#{true if boxed basic_block $BBA is dominated by boxed basic_block $BBB.}#
+  (if (and (is_basicblock bbA) (is_basicblock bbB))
+  (progn
+    (calculate_dominance_info) 
+    (if (dominated_by_other_unsafe (basicblock_content bbA) 
+                                   (basicblock_content bbB))
+      (return :true)
+    )))
+)
+
+(defprimitive post_dominated_by_other_unsafe (:basic_block bbA bbB) :long
+  :doc#{It doesn't check that post_dominance info are build, use
+      post_dominated_by_other instead.}#
+  #{ (($bbA) && ($bbB)) ?
+      dominated_by_p (CDI_POST_DOMINATORS, $bbA, $bbB) 
+      : 0 
+  }#
+)
+
+(defun post_dominated_by_other (bbA bbB)
+  :doc#{true if boxed basic_block $BBA is post dominated by boxed basic_block
+      $BBB.}#
+  (if (and (is_basicblock bbA) (is_basicblock bbB))
+  (progn
+    (calculate_post_dominance_info) 
+    (if (post_dominated_by_other_unsafe (basicblock_content bbA) 
+                                   (basicblock_content bbB))
+      (return :true)
+    )))
+)
+
+(defciterator foreach_dominated_unsafe
+  (:basic_block dominator_bb)
+  ebbdomd
+  (:basic_block dominated_bb)
+  #{
+    /* foreach_dominated_unsafe $EBBDOMD before+ */
+
+#if GCCPLUGIN_VERSION >= 4008 || MELT_GCC_VERSION >= 4008
+    vec<basic_block> $EBBDOMD#_bbvec;
+#else
+    VEC (basic_block, heap)*  $EBBDOMD#_bbvec = 0;
+#endif /* GCC 4.8 */
+    unsigned int $EBBDOMD#_ix = 0;
+    basic_block $EBBDOMD#_bb = 0;
+
+    if($DOMINATOR_BB) {
+      $EBBDOMD#_bbvec = get_dominated_by (CDI_DOMINATORS, $DOMINATOR_BB);
+#if GCCPLUGIN_VERSION >= 4008 || MELT_GCC_VERSION >= 4008
+        FOR_EACH_VEC_ELT ($EBBDOMD#_bbvec, 
+          $EBBDOMD#_ix, $EBBDOMD#_bb) 
+#else
+        if ($EBBDOMD#_bbvec) 
+          FOR_EACH_VEC_ELT (basic_block, $EBBDOMD#_bbvec, 
+            $EBBDOMD#_ix, $EBBDOMD#_bb) 
+#endif /* GCC 4.8 */
+        {
+          if (!$EBBDOMD#_ix)
+            continue;
+          $DOMINATED_BB = $EBBDOMD#_bb;
+     /*$EBBDOMD before- */}#
+      ;; after expansion
+  #{/* foreach_dominated_unsafe $EBBDOMD after+ */
+        }
+      }
+#if GCCPLUGIN_VERSION >= 4008 || MELT_GCC_VERSION >= 4008
+   /* foreach_dominated_unsafe dont need to free $EBBDOMD#_bbvec */
+#else
+    VEC_free (basic_block, heap, $EBBDOMD#_bbvec);
+    $EBBDOMD#_bbvec = 0;
+#endif /* GCC 4.8 */
+    $EBBDOMD#_bb = 0;
+    /* $EBBDOMD after- */}#
+)
+
+(defun dominated_by_bb_iterator (f data bb)
+  :doc #{run function $F on every basicblocks dominated by boxed basic_block
+      $BB with $DATA as first parameters and ending with the dominated
+      basicblock as last parameters.}#
+  (calculate_dominance_info)
+  (foreach_dominated_unsafe
+    ((basicblock_content bb))
+    (:basic_block dominated_bb)
+    (f data dominated_bb)
+  )
+)
+
+;;;;;;;;;;;;;;;; iterating on edges succeeding a given basic_block	
+;;;see also foreach_basicblock_succ_edge
+(defciterator foreach_edge_bb_succs
+  (:basic_block bb)			;the input formal
+  eachedgebbsucc			;the state symbol
+  (:edge edg)				;the local formal
+  :doc #{$FOREACH_EDGE_BB_SUCC iterates on the basic block $BB edges succeeding it $EDG}#
+  ;;
+  ;; before expansion
+  #{ /*  foreach_edge_bb_succs $EACHEDGEBBSUCC++ */		
+  if ($BB) {
+    edge_iterator $EACHEDGEBBSUCC#_iter;
+    edge $EACHEDGEBBSUCC#_edge = NULL;
+    FOR_EACH_EDGE($EACHEDGEBBSUCC#_edge, $EACHEDGEBBSUCC#_iter, ($BB)->succs) 
+      {
+        if (!$EACHEDGEBBSUCC#_edge) continue;
+	$EDG = $EACHEDGEBBSUCC#_edge;
+  }#
+  ;;
+  ;; after expansion 
+  #{ /* foreach_edge_bb_succs $EACHEDGEBBSUCC-- */
+     }; /* end FOR_EACH_EDGE $EACHEDGEBBSUCC */
+   } /* end if $EACHEDGEBBSUCC */
+   }#
+)
+
+;;
+(defun bb_dominator_iterator (bb f data)
+  :doc #{apply function $F on each dominator of $BB.}#
+  (calculate_dominance_info)
+  (let ( (dom (get_immediate_dominator bb)) )
+  (if dom
+    (progn 
+      (f data dom)
+      (bb_dominator_iterator dom f data)
+    )
+  ))
+)
+
+;;
+(defun bb_post_dominator_iterator (bb f data)
+  :doc #{apply function $F on each dominator of $BB.}#
+  (debug "entering bb_post_dominator_iterator bb=" bb " data=" data)
+  (calculate_post_dominance_info)
+  (let ( (dom (get_immediate_post_dominator bb)) )
+  (if (basicblock_content dom)
+    (progn 
+      (f data dom)
+      (bb_post_dominator_iterator dom f data)
+    )
+  ))
+)
+
+;;;;;;;;;;;;;;;; iterating on edges preceding a given basic_block
+(defciterator foreach_edge_bb_preds
+  (:basic_block bb)			;the input formal
+  eachedgebbpred			;the state symbol
+  (:edge edg)				;the local formal
+  ;;
+  ;; before expansion
+  #{ /* $EACHEDGEBBPRED++ */		
+  if ($BB) {
+    edge_iterator $EACHEDGEBBPRED#_iter;
+    edge $EACHEDGEBBPRED#_edge = NULL;
+    FOR_EACH_EDGE($EACHEDGEBBPRED#_edge, $EACHEDGEBBPRED#_iter, ($BB)->preds) 
+      {
+        if (!$EACHEDGEBBPRED#_edge) continue;
+	$EDG = $EACHEDGEBBPRED#_edge;
+  }#
+  ;;
+  ;; after expansion 
+  #{ /* $EACHEDGEBBPRED-- */
+     }; /* end FOR_EACH_EDGE $EACHEDGEBBPRED */
+   } /* end if $EACHEDGEBBPRED */
+   }#
+)
+
+;;;;;;;;;;;;;;;;
+
+(defprimitive is_mapbasicblock (map) :long
+  :doc #{Test if $MAP is a map keyed by basicblocks.}#
+  #{(melt_magic_discr((melt_ptr_t)($map)) == MELTOBMAG_MAPBASICBLOCKS)}# )
+(defprimitive mapbasicblock_size (map) :long
+  :doc #{Retrieve the allocated size of a basicblock map.}#
+  #{(melt_size_mapbasicblocks((struct meltmapbasicblocks_st*)($map)))}#)
+;; primitive to get the attribute count of a mapbasicblock
+(defprimitive mapbasicblock_count (map) :long
+  :doc #{Retrieve the used count of a map of basicblocks.}#
+  #{(melt_count_mapbasicblocks((struct meltmapbasicblocks_st*)($map)))}#)
+;; get an entry in a mapbasicblock from a C basicblock
+(defprimitive mapbasicblock_get (map :basic_block bb) :value
+  :doc #{Safely get in a a basic block map $MAP the value associated to basic block $BB.}#
+  #{(melt_get_mapbasicblocks((melt_ptr_t) ($map), ($bb)))}#)
+;; primitive for making a new map of basicblocks
+(defprimitive make_mapbasicblock (discr :long len) :value
+  :doc #{Make a map keyed by basic blocks, of given $DISCR and allocated $LEN.}#
+  #{(meltgc_new_mapbasicblocks( (meltobject_ptr_t) ($discr),
+				   ($len)))}#)
+
+;; primitive for putting into a map of basicblocks
+(defprimitive mapbasicblock_put (map :basic_block key :value val) :void
+  :doc #{Put into map $MAP the basic_block $KEY associated to $VAL.}#
+  #{melt_put_mapbasicblocks((melt_ptr_t) ($map), ($key), (melt_ptr_t) ($val))}#)
+
+;; primitive for removing from a map of basicblocks
+(defprimitive mapbasicblock_remove (map :basic_block key) :void
+  :doc #{Remove from map $MAP the entry for basic_block $KEY.}#
+ #{melt_remove_mapbasicblocks((melt_ptr_t) ($MAP), ($KEY))}#)
+
+;; primitive to get the auxiliary data of a basicblocks map
+(defprimitive mapbasicblock_aux (map) :value
+  :doc #{Safely retrieve the auxiliary data of map of basic blocks $MAP.}#
+  #{melt_auxdata_mapbasicblocks((melt_ptr_t)$MAP)}#)
+
+;; put
+(defprimitive mapbasicblock_auxput (map aux) :void
+  :doc #{Safely put the auxiliary data of map of basic blocks $MAP to $AUX.}#
+  #{melt_auxput_mapbasicblocks((melt_ptr_t) (melt_ptr_t)$MAP, (melt_ptr_t)$AUX)}#)
+
+;; primitive to get the nth basicblock of a mapbasicblock
+(defprimitive mapbasicblock_nth_attr (map :long n) :basic_block
+ #{(melt_nthattr_mapbasicblocks((struct meltmapbasicblocks_st*)($map), 
+				   (int)($n)))}#)
+;; primitive to get the nth value of a mapbasicblock
+(defprimitive mapbasicblock_nth_val (map :long n) :value
+ #{(melt_nthval_mapbasicblocks((struct meltmapbasicblocks_st*)($map),
+				  (int)($n)))}#)
+(defciterator foreach_mapbasicblock 
+  (bbmap)				; startformals
+  eachmapbb 				;state symbol
+  (:basic_block bbatt :value bbval)	;local formals
+  ;; before expansion
+  #{ /* foreach_mapbasicblock $EACHMAPBB */ {
+   int  $EACHMAPBB#_rk=0;
+   for ( $EACHMAPBB#_rk=0;  
+	 $EACHMAPBB#_rk< (int) melt_size_mapbasicblocks((struct meltmapbasicblocks_st*)($BBMAP));  
+	 $EACHMAPBB#_rk++) {
+   basic_block $EACHMAPBB#_bb =
+     melt_nthattr_mapbasicblocks((struct meltmapbasicblocks_st*)($BBMAP), $EACHMAPBB#_rk);
+   if (!$EACHMAPBB#_bb) continue;
+   $BBATT = $eachmapbb#_bb;
+   $BBVAL = melt_nthval_mapbasicblocks((struct meltmapbasicblocks_st*)($BBMAP), $EACHMAPBB#_rk);
+   }#
+  ;;after expansion
+   #{ }
+   } /*end foreach_mapbasicblock $EACHMAPBB*/
+   }#
+  )
+
+
+;; see also foreach_edge_bb_succs
+(defciterator foreach_basicblock_succ_edge
+  (:basic_block bb)
+  eachbbsucc
+  (:edge e :long eix)
+  #{
+  /* $eachbbsucc start */
+   int $eachbbsucc#_nbsuc = $bb ? EDGE_COUNT($bb->succs) : 0;
+   int $eachbbsucc#_ix = 0;
+   for ($eachbbsucc#_ix=0; 
+	$eachbbsucc#_ix < $eachbbsucc#_nbsuc;  
+	$eachbbsucc#_ix++) {
+     $e = EDGE_SUCC(($bb), $eachbbsucc#_ix);
+     if (!$e) continue;
+     $eix = $eachbbsucc#_ix;
+   }#
+   #{  /* $eachbbsucc end */ }  }#
+)
+
+;;;;;;;;;;;;;;;;
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; iterators needed in our analysis
+
+;;; an iterator is simply something which translates to a for loop in
+;;; C. It usually binds some variables (local to the iterated body)
+;;; to some C stuff.
+
+;;; Be careful to not declare any iterator related stuff in
+;;; warmelt*.melt file, because we want to be able to bootstrap
+;;; Melt/MELT (ie to generate the warmelt*.c files) even when GCC
+;;; internal representation changes a little.
+
+;;;;;;;;;;;;;;;;
+;;;; iterate on every cgraph_node which is a function with a body
+(defciterator each_cgraph_fun_body 
+  ()					; startformals
+  eachcgrfun 				;state symbol
+  (:tree funtree :gimple_seq funbody)	;local formals
+  :doc #{$EACH_CGRAPH_FUN_BODY iterates on every cgraph_node which is
+  a function declared as $FUNTREE with a body $FUNBODY.}#
+  ;; before expansion
+  #{ /*  each_cgraph_fun_body $EACHCGRFUN + */
+   struct cgraph_node *$EACHCGRFUN#_nd = NULL; 
+   /* each_cgraph_fun_body $EACHCGRFUN; GCC 4.8 has FOR_EACH_DEFINED_FUNCTION */
+#ifdef FOR_EACH_DEFINED_FUNCTION
+   FOR_EACH_DEFINED_FUNCTION($EACHCGRFUN#_nd)
+#else /* for GCC 4.6 & 4.7 without FOR_EACH_DEFINED_FUNCTION */
+   for ($EACHCGRFUN#_nd = cgraph_nodes; 
+	$EACHCGRFUN#_nd != NULL; 
+	$EACHCGRFUN#_nd = $EACHCGRFUN#_nd->next) 
+#endif /* FOR_EACH_DEFINED_FUNCTION $EACHCGRFUN */
+     {  /* each_cgraph_fun_body $EACHCGRFUN inside for */
+       tree $EACHCGRFUN#_dcl = NULL;
+       gimple_seq  $EACHCGRFUN#_bdy = NULL;
+   /* in each_cgraph_fun_body $EACHCGRFUN; 
+      notice that GCCPLUGIN_VERSION exists from GCC 4.7, but not in GCC 4.6 */
+#if (defined(GCCPLUGIN_VERSION) && (GCCPLUGIN_VERSION >= 4008)) \
+    || (defined (MELT_GCC_VERSION) && (MELT_GCC_VERSION >= 4008))
+       $EACHCGRFUN#_dcl =  $EACHCGRFUN#_nd->symbol.decl;
+#else /* GCC 4.7 or older */
+       $EACHCGRFUN#_dcl =  $EACHCGRFUN#_nd->decl;
+#endif /* older than GCC 4.8 */
+       if (!$EACHCGRFUN#_dcl) continue;
+       if (TREE_CODE($EACHCGRFUN#_dcl) != FUNCTION_DECL) continue;
+       $EACHCGRFUN#_bdy = gimple_body($EACHCGRFUN#_dcl);
+       if (!$EACHCGRFUN#_bdy) continue;
+       $FUNTREE = $EACHCGRFUN#_dcl;
+       $FUNBODY = $EACHCGRFUN#_bdy;
+  }#
+   ;;after expansion
+   #{ } /*  each_cgraph_fun_body $EACHCGRFUN - */ }#  )
+
+
+;;; iterate on every cgraph_node which is a function with a CFG and an
+;;; entryblock
+(defciterator each_cgraph_fun_entryblock
+  ()					;startformals
+  eachcgrafunentrblo				;state symbol
+  (:tree funtree :basic_block funentrybb funexitbb)	;local formals
+  ;;before expansion
+  #{ /* each_cgraph_fun_entryblock $EACHCGRAFUNENTRBLO + */
+   struct cgraph_node *$EACHCGRAFUNENTRBLO#_nd = NULL; 
+   /* each_cgraph_fun_entryblock $EACHCGRAFUNENTRBLO; GCC 4.8 has FOR_EACH_DEFINED_FUNCTION */
+#ifdef FOR_EACH_DEFINED_FUNCTION
+   FOR_EACH_DEFINED_FUNCTION($EACHCGRAFUNENTRBLO#_nd)
+#else /* for GCC 4.6 & 4.7 without FOR_EACH_DEFINED_FUNCTION */
+   for ($EACHCGRAFUNENTRBLO#_nd = cgraph_nodes; 
+        $EACHCGRAFUNENTRBLO#_nd != NULL; 
+        $EACHCGRAFUNENTRBLO#_nd = $EACHCGRAFUNENTRBLO#_nd->next) 
+#endif /* FOR_EACH_DEFINED_FUNCTION $EACHCGRAFUNENTRBLO */
+   {
+   tree  $EACHCGRAFUNENTRBLO#_dcl = NULL;
+   basic_block  $EACHCGRAFUNENTRBLO#_entrybb = NULL;
+   basic_block  $EACHCGRAFUNENTRBLO#_exitbb = NULL;
+   struct function *$EACHCGRAFUNENTRBLO#_fun = NULL;
+   /* in each_cgraph_fun_entryblock $EACHCGRAFUNENTRBLO; 
+      notice that GCCPLUGIN_VERSION exists from GCC 4.7, but not in GCC 4.6 */
+#if (defined(GCCPLUGIN_VERSION) && (GCCPLUGIN_VERSION >= 4008)) \
+    || (defined (MELT_GCC_VERSION) && (MELT_GCC_VERSION >= 4008))
+   $EACHCGRAFUNENTRBLO#_dcl = $EACHCGRAFUNENTRBLO#_nd->symbol.decl;
+#else /* GCC 4.7 or older */
+   $EACHCGRAFUNENTRBLO#_dcl = $EACHCGRAFUNENTRBLO#_nd->decl;
+#endif /* older than GCC 4.8 */
+   if (! $EACHCGRAFUNENTRBLO#_dcl) continue;
+   if (TREE_CODE($EACHCGRAFUNENTRBLO#_dcl) != FUNCTION_DECL) continue;
+   $EACHCGRAFUNENTRBLO#_fun = DECL_STRUCT_FUNCTION($EACHCGRAFUNENTRBLO#_dcl);
+   if (!$EACHCGRAFUNENTRBLO#_fun) continue;
+   /* this assert fails when in a pass without control flow graph */
+   melt_assertmsg ("no cfg in each_cgraph_fun_entryblock $EACHCGRAFUNENTRBLO",
+		   $EACHCGRAFUNENTRBLO#_fun->cfg != NULL);
+   $EACHCGRAFUNENTRBLO#_entrybb = 
+     ENTRY_BLOCK_PTR_FOR_FUNCTION ($EACHCGRAFUNENTRBLO#_fun);
+   if (! $EACHCGRAFUNENTRBLO#_entrybb) continue;
+   $EACHCGRAFUNENTRBLO#_exitbb = 
+     EXIT_BLOCK_PTR_FOR_FUNCTION ($EACHCGRAFUNENTRBLO#_fun);
+   if (! $EACHCGRAFUNENTRBLO#_exitbb) continue;
+   $funtree = $EACHCGRAFUNENTRBLO#_dcl;
+   $funentrybb = $EACHCGRAFUNENTRBLO#_entrybb;
+   $funexitbb = $EACHCGRAFUNENTRBLO#_exitbb;
+  }#
+  ;;after expansion
+  #{ } /* each_cgraph_fun_entryblock $EACHCGRAFUNENTRBLO - */ }# )
+
+
+;; iterator on every cgraph_node which is a function with a CFG, and
+;; retrieve its entry block, exit block, tuple of blocks, and uses a
+;; temporary value TMPV
+(defciterator each_cgraph_fun_call_flow_graph
+  ()	      ;start formals
+  eachcgrafuncfg
+  (:tree funtree :basic_block funentrybb funexitbb :value bbtup tmpv)
+  :doc #{$EACH_CGRAPH_FUN_CALL_FLOW_GRAPH iterates on every callgraph
+  function with a body and a control flow graph, giving the
+  declaration $FUNTREE, the entry and exit basic blocks $FUNENTRYBB
+  and $FUNEXITBB, the tuple of boxed basic blocks $BBTUP, and needs an
+  internal temporary value $TMPV}#
+  ;; before expansion
+  #{ /* each_cgraph_fun_call_flow_graph $EACHCGRAFUNCFG + */
+   struct cgraph_node *$EACHCGRAFUNCFG#_nd = NULL; 
+   /*  each_cgraph_fun_call_flow_graph loop  $EACHCGRAFUNCFG; GCC 4.8 has  FOR_EACH_DEFINED_FUNCTION */
+#ifdef FOR_EACH_DEFINED_FUNCTION
+   FOR_EACH_DEFINED_FUNCTION($EACHCGRAFUNCFG#_nd)
+#else /* for GCC 4.6 & 4.7 without FOR_EACH_DEFINED_FUNCTION */
+   for ($EACHCGRAFUNCFG#_nd = cgraph_nodes; 
+        $EACHCGRAFUNCFG#_nd != NULL; 
+        $EACHCGRAFUNCFG#_nd = $EACHCGRAFUNCFG#_nd->next) 
+#endif /* FOR_EACH_DEFINED_FUNCTION  each_cgraph_fun_call_flow_graph $EACHCGRAFUNCFG */
+    {
+      tree  $EACHCGRAFUNCFG#_dcl = NULL;
+      basic_block $EACHCGRAFUNCFG#_curbb = NULL;
+      struct function *$EACHCGRAFUNCFG#_fun = NULL;
+      int $EACHCGRAFUNCFG#_n_bb = 0;
+      int $EACHCGRAFUNCFG#_ix = 0;
+      /* inside  each_cgraph_fun_call_flow_graph loop  $EACHCGRAFUNCFG;
+         notice that GCCPLUGIN_VERSION exists from GCC 4.7, but not in GCC 4.6 */
+#if (defined(GCCPLUGIN_VERSION) && (GCCPLUGIN_VERSION >= 4008)) \
+    || (defined (MELT_GCC_VERSION) && (MELT_GCC_VERSION >= 4008))
+      $EACHCGRAFUNCFG#_dcl = $EACHCGRAFUNCFG#_nd->symbol.decl;
+#else /* GCC 4.7 or older */
+      $EACHCGRAFUNCFG#_dcl = $EACHCGRAFUNCFG#_nd->decl;
+#endif /* older than GCC 4.8 */
+      if (! $EACHCGRAFUNCFG#_dcl) 
+        continue;
+      if (TREE_CODE($EACHCGRAFUNCFG#_dcl) != FUNCTION_DECL) 
+        continue;
+      $EACHCGRAFUNCFG#_fun = DECL_STRUCT_FUNCTION($EACHCGRAFUNCFG#_dcl);
+      if (!$EACHCGRAFUNCFG#_fun) 
+        continue;
+      debugeprintf("$EACHCGRAFUNCFG#_fun %p", (void*) $EACHCGRAFUNCFG#_fun);
+      $FUNTREE = $EACHCGRAFUNCFG#_dcl;
+      $TMPV = NULL;
+      /*  each_cgraph_fun_call_flow_graph this assert fails when in a pass without control flow graph */
+      melt_assertmsg ("no cfg in each_cgraph_fun_call_flow_graph $EACHCGRAFUNCFG",
+		   $EACHCGRAFUNCFG#_fun->cfg != NULL);
+      $EACHCGRAFUNCFG#_n_bb = n_basic_blocks_for_function ($EACHCGRAFUNCFG#_fun);
+      /*  each_cgraph_fun_call_flow_graph $EACHCGRAFUNCFG create the tuple of basic blocks */
+      $BBTUP = meltgc_new_multiple
+        ((meltobject_ptr_t) MELT_PREDEF (DISCR_MULTIPLE),
+	 $EACHCGRAFUNCFG#_n_bb);
+      for ($EACHCGRAFUNCFG#_ix = 0;
+	   $EACHCGRAFUNCFG#_ix < $EACHCGRAFUNCFG#_n_bb;
+	   $EACHCGRAFUNCFG#_ix ++) {
+	   $EACHCGRAFUNCFG#_curbb =
+	   BASIC_BLOCK_FOR_FUNCTION($EACHCGRAFUNCFG#_fun, $EACHCGRAFUNCFG#_ix);
+	   if (!$EACHCGRAFUNCFG#_curbb) 
+	     continue;
+	   $TMPV = 
+	   meltgc_new_basicblock 
+	   ((meltobject_ptr_t) MELT_PREDEF (DISCR_BASIC_BLOCK),
+	    $EACHCGRAFUNCFG#_curbb);
+	   meltgc_multiple_put_nth ((melt_ptr_t)$BBTUP,
+				    $EACHCGRAFUNCFG#_ix,
+				    $TMPV);
+      } /* each_cgraph_fun_call_flow_graph $EACHCGRAFUNCFG done bb tuple */
+      $TMPV = NULL;
+  }#
+  ;; after expansion
+  #{ /*  each_cgraph_fun_call_flow_graph $EACHCGRAFUNCFG - */
+     $TMPV = NULL;
+   }
+  }#
+)
+
+;;;;;;;;;;;;;;;;
+;;;; iterate on every cgraph_node which is a declaration; don't exist in 4.8
+(gccif 
+ ("4.6."  "4.7.")
+(defciterator each_cgraph_decl
+  ()
+  eachcgrdcl
+  (:tree decl)
+  :doc #{$EACH_CGRAPH_DECL iterates on every cgraph_node which is a declaration $DECL; only for GCC 4.6 or 4.7}#
+  ;;before expansion
+#{ /*  each_cgraph_decl $EACHCGRDCL */ {
+   struct cgraph_node *$EACHCGRDCL#_nd = NULL; 
+   /* each_cgraph_decl $EACHCGRDCL loop */
+   for ($EACHCGRDCL#_nd = cgraph_nodes; 
+        $EACHCGRDCL#_nd != NULL; 
+        $EACHCGRDCL#_nd = $EACHCGRDCL#_nd->next) 
+   {
+     tree  $EACHCGRDCL#_dcl = NULL;
+     $EACHCGRDCL#_dcl = $EACHCGRDCL#_nd->decl;
+     $DECL = (tree) NULL;
+     if (!$EACHCGRDCL#_dcl) continue;
+     $DECL = $EACHCGRDCL#_dcl;
+   }#
+   ;; after expansion
+#{ /* end  each_cgraph_decl $EACHCGRDCL */ $DECL = (tree)NULL; }
+ } }#
+)
+(export_values each_cgraph_decl)
+)					;end gccif 4.6 & 4.7
+
+
+;; iterator to get the current cfun decl
+(defciterator with_cfun_decl
+  ()
+  withcfundecl
+  (:tree cfundecl)
+  :doc #{iterator done one giving the current $CFUNDECL, if cfun exists}#
+  #{ /*starting with_cfun_decl $WITHCFUNDECL*/
+   $CFUNDECL = (tree) NULL;
+   if (cfun) {
+     $CFUNDECL = cfun->decl;
+  }#
+  #{ /*end with_cfun_decl $WITHCFUNDECL*/ }
+  }#)
+
+
+;;; iterate on evey basicblock of the current cfun
+(defciterator each_bb_current_fun
+  ()					;startformals
+  eachbbcurfun				;state symbol
+  (					;local formals
+   :basic_block curbb 
+   )	
+  ;;before expansion
+  #{ /* start each_bb_current_fun $EACHBBCURFUN */ { const int $EACHBBCURFUN#_line = __LINE__;
+   $CURBB = (basic_block) NULL;
+   if (cfun && cfun->cfg) {
+     basic_block  $EACHBBCURFUN#_bb = NULL;
+     FOR_EACH_BB_FN($EACHBBCURFUN#_bb, cfun) {
+       $CURBB = (basic_block) NULL;
+       if (!$EACHBBCURFUN#_bb) continue;
+       $CURBB  = $EACHBBCURFUN#_bb;
+ }#
+ ;;after expansion
+ #{ /* ending each_bb_current_fun $EACHBBCURFUN */ }} else 
+      melt_fatal_error_at_line
+       ($EACHBBCURFUN#_line,
+	"each_bb_current_fun used with invalid cfun=%p [$EACHBBCURFUN]", 
+	(void*) cfun);
+  /* end each_bb_current_fun $EACHBBCURFUN */  }
+ }# )
+
+;;; iterate on evey basicblock of the current cfun & its decl
+(defciterator each_bb_cfun
+  ()					;startformals
+  eachbbcfun				;state symbol
+  (					;local formals
+   :basic_block cfunbb 
+   :tree cfundecl
+   )
+  :doc #{$EACH_BB_CFUN iterates on every basic block $CFUNBB of the 
+current function and gives its declaration in $CFUNDECL}#
+  ;;before expansion
+  #{ /* start each_bb_cfun $EACHBBCFUN */ const int $EACHBBCFUN#_line = __LINE__;
+   $CFUNBB = (basic_block) NULL;
+   $CFUNDECL = (tree) NULL;
+   if (cfun && cfun->cfg) {
+     basic_block  $EACHBBCFUN#_bb = NULL;
+     $CFUNDECL  = cfun->decl;
+    FOR_EACH_BB_FN($EACHBBCFUN#_bb, cfun) {
+      $CFUNBB = (basic_block) NULL;
+      if (!$EACHBBCFUN#_bb) continue;
+      $CFUNBB  = $EACHBBCFUN#_bb;
+ }#
+ ;;after expansion
+ #{  /*ending each_bb_cfun  $EACHBBCFUN */
+      $CFUNBB = (basic_block) NULL;
+       } /* end FOR_EACH_BB_FN $EACHBBCFUN */ 
+     $CFUNDECL = (tree) NULL;
+   } else /* no cfg in $EACHBBCFUN */
+      melt_fatal_error_at_line 
+       ($EACHBBCFUN#_line,
+	"each_bb_cfun used with invalid cfun=%p without cfg [$EACHBBCFUN]", 
+	(void*) cfun);
+   $CFUNBB = (basic_block) NULL;
+   $CFUNDECL = (tree) NULL;
+  /* end  each_bb_cfun $EACHBBCFUN */  
+ }# )
+
+;;; iterate on evey local declaration of the current cfun
+(defciterator each_local_decl_cfun
+  ()					;startformals
+  eachlocalcfun				;state symbol
+  (					;local formals
+   :tree tlocdecl :long ix
+  )
+  ;;before expansion
+  #{ /* start each_local_decl_cfun $EACHLOCALCFUN */ const int $EACHLOCALCFUN#_line = __LINE__;
+   $TLOCDECL = (tree) NULL;
+   $IX = 0;
+   if (!cfun)
+     melt_fatal_error_at_line
+      ($EACHLOCALCFUN#_line,
+       "each_local_decl_cfun [$EACHLOCALCFUN] called without cfun %p", 
+       (void*) cfun);
+   if (cfun->local_decls) {
+     unsigned $EACHLOCALCFUN#_ix = 0;
+     tree $EACHLOCALCFUN#_tdcl = NULL_TREE;
+     FOR_EACH_LOCAL_DECL (cfun, $EACHLOCALCFUN#_ix, $EACHLOCALCFUN#_tdcl) {
+        $TLOCDECL = $EACHLOCALCFUN#_tdcl;
+        $IX = $EACHLOCALCFUN#_ix;
+  }#
+  ;; after expansion
+  #{ /* ending each_local_decl_cfun $EACHLOCALCFUN */
+        $TLOCDECL = NULL_TREE;
+      }; /* end FOR_EACH_LOCAL_DECL $EACHLOCALCFUN */
+    $EACHLOCALCFUN#_tdcl = NULL_TREE;
+    $EACHLOCALCFUN#_ix = 0;
+    } /* end  each_local_decl_cfun if cfun $EACHLOCALCFUN */ 
+  }#
+)
+
+
+;; the basic block source of an edge
+(defprimitive edge_src_bb (:edge eg) :basic_block
+#{ ($eg)?($eg->src):NULL }#)
+
+;; the basic block destination of an edge
+(defprimitive edge_dest_bb (:edge eg) :basic_block
+#{ ($eg)?($eg->dest):NULL }#)
+
+;; test if an edge is for a true value of a branch
+(defprimitive edge_for_true_value (:edge eg) :long
+#{ ($eg && $eg->flags & EDGE_TRUE_VALUE) }#)
+;; test if an edge is for a false value of a branch
+(defprimitive edge_for_false_value (:edge eg) :long
+#{ ($eg && $eg->flags & EDGE_FALSE_VALUE) }#)
+
+(defprimitive debugtreecodenum  (:cstring msg :long opcod) :void
+  #{ debugeprintf("debugtreecodenum %s #%ld %s", $msg, 
+		  $opcod, tree_code_name[$opcod]);
+}#)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;; basicblock iteration
+
+(defciterator eachgimple_in_basicblock
+  (:basic_block bb)			;start formals
+  eachgimpbb
+  (:gimple g)				;local formals
+;;; before expansion
+  #{
+  /* start  eachgimple_in_basicblock $EACHGIMPBB */ 
+  gimple_stmt_iterator gsi_$EACHGIMPBB	;
+  if ($BB) 
+    for (gsi_$EACHGIMPBB = gsi_start_bb ($BB) ;
+		       !gsi_end_p (gsi_$EACHGIMPBB) ;
+		       gsi_next (&gsi_$EACHGIMPBB)) {
+  $G = gsi_stmt (gsi_$EACHGIMPBB)	;
+  }#
+;;; after expansion
+  #{ } /* end  eachgimple_in_basicblock $EACHGIMPBB */ }#  
+  )
+  
+
+(defciterator eachgimplephi_in_basicblock
+  (:basic_block bb)			;start formals
+  eachgimphi
+  (:gimple g)				;local formals
+  ;;; before expansion
+  #{
+   /* start $EACHGIMPHI */ 
+   gimple_stmt_iterator gsi_$EACHGIMPHI;
+   if ($BB) 
+     for (gsi_$EACHGIMPHI = gsi_start_phis ($BB);
+          !gsi_end_p (gsi_$EACHGIMPHI);
+          gsi_next (&gsi_$EACHGIMPHI)) {
+       $G = gsi_stmt (gsi_$EACHGIMPHI);
+  }#
+  ;;; after expansion
+  #{ } /* end $EACHGIMPHI */ }#  )
+  
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;; gimpleseq iteration
+;;;; iterate on a function formal parameters
+(defciterator each_param_in_fundecl
+  ( :tree fundeclt )			;start formals
+  eachparamfun
+  ( :tree paramdclt )				;local formals
+  ;;; before expansion
+  #{
+   /*eachparaminfunctiondecl*/
+   tree $eachparamfun#_tr=NULL;
+   if (($fundeclt) && TREE_CODE($fundeclt) == FUNCTION_DECL)
+     for ($eachparamfun#_tr = DECL_ARGUMENTS($fundeclt);
+          $eachparamfun#_tr != NULL;
+          $eachparamfun#_tr = TREE_CHAIN($eachparamfun#_tr)) {
+ 	    $paramdclt = $eachparamfun#_tr;
+  }#
+  ;;; after expansion
+  #{
+   }/*end eachparaminfunctiondecl*/
+  }# )
+
+;;; iterate on fields of a structure
+(defciterator foreach_field_in_record_type
+  (:tree first_field)
+  efirt
+  (:tree field)
+
+  #{   /* $EFIRT + */
+       if ($first_field && TREE_CODE ($first_field) == FIELD_DECL)
+       {
+           tree $efirt#_current;
+	   for ($efirt#_current = $first_field; 
+		$efirt#_current != NULL;
+		$efirt#_current = TREE_CHAIN ($efirt#_current))
+	   {
+	       $field = $efirt#_current;
+  }#
+
+  #{ /* $EFIRT - */
+           }
+       }
+  }#)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;; loop related operations
+
+(defprimitive is_loop (v) :long
+   #{(melt_magic_discr((melt_ptr_t)($v)) == MELTOBMAG_LOOP)}# )
+
+(defprimitive make_loop (discr :loop l) :value
+  #{(meltgc_new_loop((meltobject_ptr_t)($discr),($l)))}# )
+
+(defprimitive loop_content (v) :loop
+  #{(melt_loop_content((melt_ptr_t)($v)))}# )
+
+
+(defprimitive output_loop (out :loop lo) :void
+  :doc #{Output to $OUT the loop $LO}#
+  #{ meltgc_out_loop((melt_ptr_t)($OUT), ($LO)) }# )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; retrieve the loop body as a tuple of boxed basic_block-s
+(defun loop_body_tuple (discr :loop lo) 
+  (debug "loop_body_tuple lo=" lo)
+  (if (null discr) (setq discr discr_multiple))
+  (if lo
+      (let ( (:long loopnbnodes 0) 
+	     )
+	(code_chunk 
+	 getloopnbnodeschunk
+	 #{/*$GETLOOPNBNODESCHUNK*/
+	 $LOOPNBNODES = $LO?($LO -> num_nodes):0 ; }#
+	 )
+	(let ( (tupbody (make_multiple discr loopnbnodes))
+	       )
+	  (if (null tupbody) (return)) 
+	  ;; first, fill the tuple with empty basic block boxes
+	  (foreach_long_upto 
+	   (0 (-i loopnbnodes 1))
+	   (:long ix)
+	     (multiple_put_nth 
+	      tupbody ix 
+	      (make_basicblock discr_basic_block (null_basicblock)))
+	   )
+	  (let ( (ourbb ())
+		 )
+	  ;; retrieve the malloc-ed array of basic blocks and use it to fill the tuple
+	  ;; then free it
+	  (code_chunk
+	   fillbbboxeschunk
+	   #{ /*$FILLBBBOXESCHUNK*/
+	   long $FILLBBBOXESCHUNK#_ix = 0 ;
+	   basic_block* $FILLBBBOXESCHUNK#_bbtab = 0 ;
+	   $FILLBBBOXESCHUNK#_bbtab = get_loop_body ($LO) ; /* a malloc-ed array */
+	   for ($FILLBBBOXESCHUNK#_ix = 0 ;
+				      $FILLBBBOXESCHUNK#_ix < $LOOPNBNODES ;
+				      $FILLBBBOXESCHUNK#_ix++) {
+	   $OURBB = melt_multiple_nth ((melt_ptr_t) $TUPBODY, $FILLBBBOXESCHUNK#_ix)	;
+	   meltgc_basicblock_updatebox
+                ((melt_ptr_t) $OURBB, 
+		 $FILLBBBOXESCHUNK#_bbtab[$FILLBBBOXESCHUNK#_ix]) ;
+	   }
+	   free ($FILLBBBOXESCHUNK#_bbtab), $FILLBBBOXESCHUNK#_bbtab=0 ;
+	   $OURBB = (melt_ptr_t)0;
+	   /*end $FILLBBBOXESCHUNK*/
+	   }#)
+	  )
+	  (debug "loop_body_tuple return tupbody=" tupbody)
+	  (return tupbody)
+	  ))))
+
+;;; iterator to retrieve loop exit edges & iterate on them
+(defciterator foreach_loop_exit_edges
+  (:loop lo)				;start formal
+  eachloopexitedge			;state symbol
+  (:edge ed :long ix)			;local formals
+  ;; before expansion
+  #{ /* $EACHLOOPEXITEDGE before+ */
+#if GCCPLUGIN_VERSION >= 4008 || MELT_GCC_VERSION >= 4008
+  vec<edge> $EACHLOOPEXITEDGE#_edgevec;
+#else
+  VEC (edge, heap)* $EACHLOOPEXITEDGE#_edgevec = 0;
+#endif /* GCC 4.8 */
+  unsigned $EACHLOOPEXITEDGE#_ix = 0;
+  edge $EACHLOOPEXITEDGE#_edge = 0;
+  if ($LO) 
+    $EACHLOOPEXITEDGE#_edgevec = get_loop_exit_edges ($LO);
+
+#if GCCPLUGIN_VERSION >= 4008 || MELT_GCC_VERSION >= 4008
+      FOR_EACH_VEC_ELT ($EACHLOOPEXITEDGE#_edgevec, 
+		      $EACHLOOPEXITEDGE#_ix, $EACHLOOPEXITEDGE#_edge) 
+#else
+    if ($EACHLOOPEXITEDGE#_edgevec)
+      FOR_EACH_VEC_ELT (edge, $EACHLOOPEXITEDGE#_edgevec, 
+ 			      $EACHLOOPEXITEDGE#_ix, $EACHLOOPEXITEDGE#_edge) 
+#endif /* GCC 4.8 */
+    {
+      if (!$EACHLOOPEXITEDGE#_edge) 
+        continue;
+      $ED = $EACHLOOPEXITEDGE#_edge; 
+      $IX = $EACHLOOPEXITEDGE#_ix;
+/* $EACHLOOPEXITEDGE before- */}#
+  ;; after expansion
+  #{ /* $EACHLOOPEXITEDGE after+ */
+  } /* end FOR_EACH_VEC_ELT  $EACHLOOPEXITEDGE*/
+#if GCCPLUGIN_VERSION >= 4008 || MELT_GCC_VERSION >= 4008
+  /* no need to free $EACHLOOPEXITEDGE#_edgevec */
+#else
+  VEC_free (edge, heap, $EACHLOOPEXITEDGE#_edgevec);
+  $EACHLOOPEXITEDGE#_edgevec = 0;
+#endif /* GCC 4.8 */
+  $EACHLOOPEXITEDGE#_edge = 0;
+/* $EACHLOOPEXITEDGE after- */}#
+)
+ 
+;; retrieve the loop exit edges as a tuple of boxed edge-s
+(defun loop_exit_edges_tuple (discr :loop lo) 
+  (debug "loop_exit_edges_tuple lo=" lo)
+  (if (null discr) (setq discr discr_multiple))
+  (let ( (:long maxix 0)
+	 (edglis (make_list discr_list))
+	 )
+    (foreach_loop_exit_edges
+     (lo)
+     (:edge ed :long ix)
+     (let ( (boxedge (make_edge discr_edge ed))
+	    )
+       (if (>=i maxix ix) (setq maxix (+i 1 ix)))
+       (list_append edglis boxedge)
+       ))
+    (let ( (edgevec (make_multiple discr maxix))
+	   (:long ix 0)
+	   )
+      (foreach_pair_component_in_list
+       (edglis)
+       (curpair edgebox)
+       (multiple_put_nth edgevec ix edgebox)
+       (setq ix (+i ix 1)))
+      (debug "loop_exit_edges_tuple return edgevec=" edgevec)
+      (return edgevec)))
+  )
+
+;;;;;;;;;;;;;;;;
+(defun superloop_tuple (loopv)
+  :doc #{Given a boxed loop $LOOPV, return the tuple of its boxed superloops.}#
+  (if (is_loop loopv)
+      (let ( (:loop lo (loop_content loopv))
+	     )
+	(if lo
+	    (let (
+		  (:long lodepth (loop_depth lo))
+		  (tup (make_multiple discr_multiple lodepth))
+		  )
+	      (foreach_superloop
+	       (lo)
+	       (:loop curloop :long loopix)
+		 (multiple_put_nth tup loopix 
+				   (make_loop discr_loop curloop))
+	       )
+	      (return tup)
+	      )))))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; safe queries to the cfun (when cfun is null, return null or 0)
+(defprimitive has_cfun () :long #{ cfun != NULL }#)
+
+(defprimitive cfun_decl () :tree 
+  #{ (cfun?(cfun->decl):NULL) }#)
+
+(defprimitive cfun_static_chain_decl () :tree
+  #{ (cfun?(cfun->static_chain_decl):NULL) }#)
+
+(defprimitive cfun_nonlocal_goto_save_area () :tree
+  #{ (cfun?(cfun->nonlocal_goto_save_area):NULL) }#)
+
+
+(defprimitive cfun_has_cfg () :long
+  #{ (cfun?(cfun->cfg != NULL):0) }#)
+
+(defprimitive cfun_cfg_entry_block () :basic_block
+  #{ ((cfun && cfun->cfg)? ENTRY_BLOCK_PTR_FOR_FUNCTION(cfun):NULL) }#)
+
+(defprimitive cfun_cfg_exit_block () :basic_block
+  #{ ((cfun && cfun->cfg)? EXIT_BLOCK_PTR_FOR_FUNCTION(cfun):NULL) }#)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;; debug support
+(defun debugfun_tree (dbgi :tree tr)
+  (assert_msg "check dbgi" (is_a dbgi class_debug_information) dbgi)
+  (let ( (out (get_field :dbgi_out dbgi))
+	 )
+    (if tr
+	(code_chunk 
+	 treeoutch
+	 #{ /* $TREEOUTCH */ meltgc_ppout_tree ((melt_ptr_t)$OUT, 0, $TR); }#
+	 )
+      (add2out_strconst out "*nulltree*")
+      )))
+(register_tree_debug_fun debugfun_tree)
+
+(defun output_tree_briefly (out :tree tr)
+  (if (is_out out)
+      (if tr
+	  (code_chunk 
+	   treeoutbchbr
+	   #{ /* output_tree_briefly $TREEOUTBCHBR */ meltgc_ppout_tree_briefly ((melt_ptr_t)$OUT, 0, $TR) ; }#
+	   )
+	(add2out_strconst out "*nulltree*")
+	)))
+
+(defun output_tree (out :tree tr)
+  (if (is_out out)
+      (if tr
+	  (code_chunk 
+	   treeoutchbr
+	   #{ /* output_tree $TREEOUTCHBR */ meltgc_ppout_tree ((melt_ptr_t)$OUT, 0, $TR) ; }#
+	   )
+	(add2out_strconst out "*nulltree*")
+	)))
+
+(defun dbgfun_tree_briefly (dbgi :tree tr)
+  (assert_msg "check dbgi" (is_a dbgi class_debug_information) dbgi)
+  (output_tree_briefly (get_field :dbgi_out dbgi) tr)
+  )
+
+(define dbg_tree_briefly 
+  (clone_with_discriminant dbgfun_tree_briefly discr_debug_closure))
+
+;;;;;;;;;;;;;;;;
+(defun debugfun_basicblock (dbgi :basic_block bb)
+  (assert_msg "check dbgi" (is_a dbgi class_debug_information) dbgi)
+  (let ( (out (get_field :dbgi_out dbgi))
+	 )
+    (if bb
+	(code_chunk
+	 outbbchk
+	 #{ /*$OUTBBCHK*/ meltgc_ppout_basicblock ((melt_ptr_t)$OUT, 0, $BB);}#
+	 )
+      (add2out_strconst out "*nullbasicblock*")
+      )))
+(register_basicblock_debug_fun debugfun_basicblock)
+
+;;;;;;;;;;;;;;;;
+(defun debugfun_edge (dbgi :edge ed)
+  (assert_msg "check dbgi" (is_a dbgi class_debug_information) dbgi)
+  (let ( (out (get_field :dbgi_out dbgi))
+	 )
+    (if ed
+	(code_chunk
+	 outedgechk
+	 #{ /*$OUTEDGECHK*/ meltgc_out_edge ((melt_ptr_t)$OUT, $ED);}#
+	 )
+      (add2out_strconst out "*nulledge*")
+      )))
+(register_edge_debug_fun debugfun_edge)
+
+
+;;;;;;;;;;;;;;;;
+(defun debugfun_loop (dbgi :loop lo)
+  (assert_msg "check dbgi" (is_a dbgi class_debug_information) dbgi)
+  (let ( (out (get_field :dbgi_out dbgi))
+	 )
+    (if lo
+	(code_chunk
+	 outloopchk
+	 #{ /*$OUTLOOPCHK*/ meltgc_out_loop ((melt_ptr_t)$OUT, $LO);}#
+	 )
+      (add2out_strconst out "*nullloop*")
+      )))
+(register_loop_debug_fun debugfun_loop)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; DEBUG OUTPUT 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;; boxed basicblock debug
+(defun dbgout_boxbasicblock_method (self dbgi :long depth)
+  (assert_msg "check dbgi" (is_a dbgi class_debug_information) dbgi)
+  (let ( (dis (discrim self)) 
+	 (out  (unsafe_get_field :dbgi_out dbgi)) ) 
+    (add2out_strconst out " ?/")
+    (if (is_a dis class_named) (add2out_string out (unsafe_get_field :named_name dis)))
+    (add2out_strconst out "/{")
+    (add2out_indentnl out (+i 1 depth))
+    (ppstrbuf_basicblock out (+i 1 depth) (basicblock_content self))
+    (add2out_strconst out "}/")
+    (add2out_indentnl out depth)
+    )
+  )
+(install_method discr_basic_block dbg_output dbgout_boxbasicblock_method)
+
+
+;;;; boxed edge debug
+(defun dbgout_boxedge_method (self dbgi :long depth)
+  (assert_msg "check dbgi" (is_a dbgi class_debug_information) dbgi)
+  (assert_msg "check self" (is_edge self) self)
+  (let ( (dis (discrim self)) 
+	 (out  (unsafe_get_field :dbgi_out dbgi)) ) 
+    (add2out_strconst out " ?/")
+    (if (is_a dis class_named) (add2out_string out (unsafe_get_field :named_name dis)))
+    (add2out_strconst out "/[")
+    (output_edge out (edge_content self))
+    (add2out_strconst out "]/")
+    (add2out_indentnl out depth)
+    )
+  )
+(install_method discr_edge dbg_output dbgout_boxedge_method)
+
+
+;;; boxed loop debug
+(defun dbgout_boxloop_method (self dbgi :long depth)
+  (assert_msg "check dbgi" (is_a dbgi class_debug_information) dbgi)
+  (assert_msg "check self" (is_loop self) self)
+  (let ( (dis (discrim self)) 
+	 (out  (unsafe_get_field :dbgi_out dbgi)) ) 
+    (add2out_strconst out " ?/")
+    (if (is_a dis class_named) (add2out_string out (unsafe_get_field :named_name dis)))
+    (add2out_strconst out "/[")
+    (output_loop out (loop_content self))
+    (add2out_strconst out "]/")
+    (add2out_indentnl out depth)
+    )
+  )
+(install_method discr_loop dbg_output dbgout_boxloop_method)
+
+
+;;;; basicblockmap debug
+(defun dbgout_mapbasicblock_method (self dbgi :long depth)
+  (assert_msg "check dbgi" (is_a dbgi class_debug_information) dbgi)
+  (assert_msg "check self" (is_mapbasicblock self) self)
+  (let ( (dis (discrim self)) 
+	 (:long mapcount (mapbasicblock_count self))
+	 (out  (unsafe_get_field :dbgi_out dbgi)) 
+	 (aux (mapbasicblock_aux self))
+	 ) 
+    (add2out_strconst out " !bbmap.")
+    (if (is_a dis class_named) (add2out_string out (unsafe_get_field :named_name dis)))
+    (add2out_strconst out "/")
+    (add2out_longdec out mapcount)
+    (add2out_strconst out "!{")
+    (if (and aux (<=i depth 1))
+	(progn
+	  (add2out out " aux:")
+	  (dbg_out aux dbgi (+i depth 3))))
+    (foreach_mapbasicblock
+     (self)
+     (:basic_block bbatt :value bbval)
+     (add2out_indentnl out (+i depth 1))
+     (add2out_strconst out "*")
+     (ppstrbuf_basicblock out (+i depth 1) bbatt)
+     (add2out_strconst out " == ")
+     (dbg_out bbval dbgi (+i depth 2))
+     )
+    (add2out_strconst out "}!")
+    (add2out_indentnl out depth)
+    ))
+(install_method discr_map_basic_blocks dbg_output dbgout_mapbasicblock_method)
+
+
+
+
+;;;; edgemap debug
+(defun dbgout_mapedge_method (self dbgi :long depth)
+  (assert_msg "check dbgi" (is_a dbgi class_debug_information) dbgi)
+  (assert_msg "check self" (is_mapedge self) self)
+  (let ( (dis (discrim self)) 
+	 (:long mapcount (mapedge_count self))
+	 (out  (unsafe_get_field :dbgi_out dbgi)) 
+	 (aux (mapedge_aux self))
+	 ) 
+    (add2out_strconst out " !edgemap.")
+    (if (is_a dis class_named) (add2out_string out (unsafe_get_field :named_name dis)))
+    (add2out_strconst out "/")
+    (add2out_longdec out mapcount)
+    (add2out_strconst out "!{")
+    (if (and aux (<=i depth 1))
+	(progn
+	  (add2out out " aux:")
+	  (dbg_out aux dbgi (+i depth 3))))
+    (foreach_mapedge
+     (self)
+     (:edge edatt :value bbval)
+     (add2out_indentnl out (+i depth 1))
+     (add2out_strconst out "*")
+     (output_edge out edatt)
+     (add2out_strconst out " == ")
+     (dbg_out bbval dbgi (+i depth 2))
+     )
+    (add2out_strconst out "}!")
+    (add2out_indentnl out depth)
+    ))
+(install_method discr_map_edges dbg_output dbgout_mapedge_method)
+
+
+(defun read_arg_list (locs :cstring argname)
+  :doc #{If plugin argument $ARGNAME is provided, read it into a list located thru $LOCS, or else nil.}#
+  (debug "read_arg_list argname=" argname)
+  (let ( (:cstring sarg (melt_argument argname))
+	 (argstr (if sarg (constant_box sarg)))
+	 (arglist (if argstr (read_strv_loc argstr locs)))
+	 )
+    (debug "read_arg_list result arglist=" arglist)
+    (return arglist)
+))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(export_values
+;; in alphanumerical order
+ ==bb
+ ==e
+ basicblock_content
+ basicblock_gimpleseq
+ basicblock_index
+ basicblock_nb_pred
+ basicblock_nb_succ
+ basicblock_phinodes
+ basicblock_single_succ 
+ basicblock_nth_pred_edge
+ basicblock_nth_succ_edge
+ bb_dominator_iterator
+ bb_post_dominator_iterator
+ cfun_cfg_entry_block
+ cfun_cfg_exit_block
+ cfun_decl
+ cfun_has_cfg
+ cfun_nonlocal_goto_save_area
+ cfun_static_chain_decl
+ dbg_tree_briefly
+ debug_dominance_info
+ debug_post_dominance_info
+ dominated_by_bb_iterator
+ dominated_by_other
+ dominated_by_other
+ each_bb_cfun
+ each_bb_current_fun
+ each_cgraph_fun_body
+ each_cgraph_fun_call_flow_graph
+ each_cgraph_fun_entryblock 
+ each_local_decl_cfun
+ each_loop
+ each_param_in_fundecl
+ eachgimple_in_basicblock
+ eachgimplephi_in_basicblock
+ edge_content
+ edge_dest_bb
+ edge_for_false_value
+ edge_for_true_value 
+ edge_src_bb
+ foreach_basicblock_succ_edge
+ foreach_edge_bb_preds
+ foreach_edge_bb_succs
+ foreach_field_in_record_type
+ foreach_loop_exit_edges
+ foreach_mapbasicblock
+ foreach_mapedge
+ foreach_maploop
+ foreach_superloop
+ get_immediate_dominator
+ get_immediate_post_dominator
+ has_cfun
+ install_melt_gcc_pass
+ install_melt_pass_in_gcc
+ is_basicblock
+ is_edge
+ is_loop
+ is_mapbasicblock 
+ is_mapedge
+ is_maploop
+ isnull_basicblock
+ loop_body_tuple
+ loop_can_be_parallel
+ loop_content
+ loop_depth
+ loop_exit_edges_tuple
+ loop_header
+ loop_index_number
+ loop_inner
+ loop_latch
+ main_input_filename
+ make_basicblock
+ make_edge
+ make_loop
+ make_mapbasicblock
+ make_mapedge
+ make_maploop
+ mapbasicblock_aux
+ mapbasicblock_auxput
+ mapbasicblock_count
+ mapbasicblock_get
+ mapbasicblock_nth_attr
+ mapbasicblock_nth_val 
+ mapbasicblock_put
+ mapbasicblock_remove  
+ mapbasicblock_size
+ mapedge_aux 
+ mapedge_auxput 
+ mapedge_count
+ mapedge_get
+ mapedge_nth_attr
+ mapedge_nth_val
+ mapedge_put
+ mapedge_remove
+ mapedge_size
+ maploop_count
+ maploop_get
+ maploop_nth_attr
+ maploop_nth_val
+ maploop_put
+ maploop_remove
+ maploop_size
+ notnull_basicblock
+ null_basicblock
+ null_edge
+ number_of_loops
+ output_edge
+ output_loop
+ output_tree
+ output_tree_briefly
+ post_dominated_by_other
+ post_dominated_by_other
+ ppstrbuf_basicblock 
+ ppstrbuf_gimple
+ ppstrbuf_gimple_seq
+ ppstrbuf_tree
+ read_arg_list
+ superloop_at_depth
+ superloop_tuple
+ with_cfun_decl
+ )
+
+(export_class
+ class_analysis_state
+)
+;; eof xtramelt-ana-base.melt

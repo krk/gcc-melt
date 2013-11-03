@@ -1,0 +1,107 @@
+; -*- lisp -*-
+;; file tmatch-5.melt
+
+#| run in buildir/gcc
+ ln -s $GCCMELT_SOURCE/gcc/testsuite/melt/tmatch-5.melt 
+ gccmelt_cflags="$(grep fmelt-module-cflags meltbuild-checkruntime.args | sed 's:^ *::')" 
+ ./cc1 -fmelt-mode=runfile  -fmelt-module-path=meltbuild-stage3:meltbuild-modules \
+    -fmelt-source-path=meltbuild-stage3:meltbuild-sources \
+    -fmelt-module-makefile=$GCCMELT_SOURCE/gcc/melt-module.mk \
+    -fmelt-workdir=meltbuild-workdir \
+    -fmelt-tempdir=meltbuild-tempdir \
+    -fmelt-keep-temporary-files \
+    -fmelt-init=@warmelt.quicklybuilt \
+    -fmelt-option=match_graphic:/tmp/melt5graph \
+    -fmelt-arg=tmatch-5.melt \
+     "$gccmelt_cflags" \
+    -fmelt-debug empty-file-for-melt.c
+|#
+
+(cheader ##{#define MELTDEBUG_MATCHING 1
+}#)
+
+(defun tmini5 (x g)
+  (debug "tmini5 start x=" x "\n.. g=" g "\n")
+  (matchalt 
+   x
+   ( ?(instance 
+       class_reference 
+       :referenced_value 
+       ?(integerbox_of ?bx))
+      (debug "tmini5 bx=" bx)
+      (g x bx)
+      )
+
+   (
+    ?(and ?xx
+	  ?(instance class_reference 
+		     :referenced_value ?xx)
+	  )
+    (debug "tmini5 xx=" xx)
+    (g xx))
+   ))
+
+#| 
+
+;; this test passes with MELT svn rev 195419 of jan 25, 2013
+(defun ttinymicro5 (x g)
+  (matchalt x
+   (
+    ?(instance class_reference 
+	       :referenced_value ?xxx)
+     (g xxx))
+   ))
+
+;; this test passes with MELT svn rev 196249 of feb 25, 2013	 
+(defun tmicro5 (x g)
+  (matchalt x
+   (
+    ?(and
+      ?xx
+      ?(instance class_reference 
+		 :referenced_value ?xx)
+      )
+      (g xx))
+   ))
+
+|#
+
+
+(letrec ( (t1 (instance class_reference :referenced_value '17))
+	  (t2 (instance class_reference :referenced_value t2))
+	  (t3 (instance class_reference :referenced_value :true))
+	  (gg (lambda (u :long l)
+		(debug "@@gg u=" u "\n .. l="l)))
+	  )
+  (debug "tmatch-5 tmini5 t1=" t1)
+  (tmini5 t1 gg)
+  (debug "tmatch-5 tmini5 t2=" t2)
+  (tmini5 t2 gg)
+  (debug "tmatch-5 tmini5 t3=" t3)
+  (tmini5 t3 gg)
+  (debug "tmatch-5 tmini5 end gg=" gg)
+  )
+
+#|
+(defun tmatch5 (curexp)
+    (match 
+     curexp 
+     (?(instance 
+        class_source_definition 
+        :sdef_name ?dnam
+        :sdef_doc 
+        ?(as ?doc 
+  	   ?(instance class_sexpr 
+  		      ; :loca_location ?loc 
+  		      ; :sexp_contents ?docl
+  		      )
+  	   )
+        )
+       (debug_msg dnam "makedoc_docmd dnam")
+       (debug_msg doc "makedoc_docmd doc")
+       )
+     )
+    )
+
+|#  
+;; eof tmatch-5.melt

@@ -1,0 +1,66 @@
+;; -*- lisp -*-
+;; file tfunmatch-1.melt
+
+#| run in buildir/gcc
+ ./cc1 -fmelt=translatefile -fmelt-module-path=. -fmelt-source-path=.:$GCCMELTSOURCE/gcc/melt \
+    -fmelt-compile-script=./built-melt-cc-script \
+    -fmelt-tempdir=/tmp -fmelt-init=@warmelt2 \
+    -fmelt-arg=$GCCMELTSOURCE/gcc/testsuite/melt/tfunmatch-1.melt -fmelt-debug
+|#
+
+
+
+;; fmat is the funmatcher
+;; m is the matched stuff
+;; n is the input
+;; result is non-nil when matching, and secondary result is the submatched
+(defun matchbiggereven (fmat :long m :long n)
+   (debug_msg fmat "matchbiggereven start fmat=")
+   (messagenum_dbg "matchbiggereven m=" m)
+   (messagenum_dbg "matchbiggereven n=" n)
+   (if (==i (%iraw m 2) 0)
+       (if (>i m n)
+	   (let ( (:long h (/iraw m 2)) )
+	     (messagenum_dbg "matchbiggereven h=" h)
+	     (debug_msg fmat "matchbiggereven success")
+	     (return fmat h)
+	     )))   
+   (debug_msg fmat "matchbiggereven fail fmat=")
+   (return)
+)
+
+(defun applybiggereven (fmat :long x)
+  (debug_msg fmat "applybiggereven fmat")
+  (messagenum_dbg "applybiggereven x=" x)
+  (code_chunk apbigev #{ printf("applybiggereven x=%ld\n", $x); }#)
+  (return fmat x)
+)
+
+;; (DEFUNMATCHER <symb> <informals> <outformals> <matchfun> <applyfun> [<data>])
+(defunmatcher isbiggereven
+  ;; the informals; first is the matched input
+  (:long m x) 
+  ;; the outformals
+  (:long o) 
+  matchbiggereven applybiggereven)
+	      
+
+
+(defun tfunmatch (o :long x)
+  (debug_msg o "start tfunmatch o=")
+  (messagenum_dbg "start tfunmatch x=" x)
+  (match x
+	 (?(isbiggereven 2 ?u)
+	   (debug_msg o "tfunmatch isbiggereven matched 2 o=")
+	   (messagenum_dbg "tfunmatch isbiggereven matched u=" u)
+	   )
+	 (?_
+	  (debug_msg o "tfunmatch not isbiggereven 2")))
+  (debug_msg o "end tfunmatch"))
+
+(tfunmatch 'one 1)
+(tfunmatch 'four 4)
+(tfunmatch 'ten 10)
+
+(isbiggereven 'six 6)
+;; eof tfunmatch-1.melt

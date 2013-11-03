@@ -1,0 +1,32 @@
+; -*- lisp -*-
+;; file tmatch-7.melt
+
+#| run in buildir/gcc
+ ./cc1 -fmelt=runfile  -fmelt-module-path=melt-modules:.  \
+    -fmelt-source-path=melt-sources:.:$GCCMELT_SOURCE/gcc/melt \
+    -fmelt-tempdir=/tmp \
+    -fmelt-option=match_graphic=/tmp/melt7graph,alternate_match \
+    -fmelt-arg=$GCCMELT_SOURCE/gcc/testsuite/melt/tmatch-7.melt \
+    -fmelt-debug empty-file-for-melt.c
+|#
+
+(debug_msg some_integer_multiple "some_integer_multiple at top")
+(debug_msg some_integer_greater_than "some_integer_greater_than at top")
+
+(defun testmatchnumber (f g x :long i j)
+  (match i
+         (?(some_integer_multiple
+            (+i 2 j)
+	    ?(and
+	      ?(some_integer_greater_than 3)
+	      ?k))
+           (debuglong "testmatchnumber k" k)
+           (f x k)
+           )
+         (?(some_integer_greater_than 10)
+	   (g y i))
+         )
+  )
+
+(debug_msg testmatchnumber "toplevel testmatchnumber")
+;; eof tmatch-7.melt

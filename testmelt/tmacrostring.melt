@@ -1,0 +1,23 @@
+;; -*- lisp -*-
+;; file tmacrostring.melt
+
+;;; this tests the macrostring read syntax
+#| 
+ ./cc1 -fmelt-mode=runfile  -fmelt-module-path=melt-stage1:melt-modules \
+    -fmelt-source-path=melt-stage1:melt-sources \
+    -fmelt-tempdir=/tmp -fmelt-init=@warmelt -fmelt-workdir=melt-workdir \
+    -fmelt-arg=tmacrostring.melt  \
+     -fmelt-debug empty-file-for-melt.c
+|#
+
+(defprimitive mystrlen (:cstring s) :long
+  #{ $S ? strlen($S) : 0
+  }#
+)
+
+(defun doit () 
+  (make_integerbox discr_integer (mystrlen "hello world")))
+
+(doit)
+
+

@@ -1,0 +1,62 @@
+; -*- lisp -*-
+;; file tletrec.melt
+
+#| run in buildir/gcc
+ ./cc1 -fmelt=runfile  -fmelt-module-path=.    \
+    -fmelt-source-path=.:$GCCMELTSOURCE/gcc/melt \
+    -fmelt-tempdir=/tmp -fmelt-init=@warmelt2 \
+    -fmelt-arg=$GCCMELTSOURCE/gcc/testsuite/melt/tletrec.melt \
+    -fmelt-debug empty-file-for-melt.c
+|#
+
+
+;; 2 useless functions
+
+(defun testzeroletrec (g)
+  (letrec ( (f 
+	     (lambda (x) (g x x)))
+	    )
+	  (f g)))
+
+(defun testminiletrec (xx yy kk)
+  (letrec (
+	   (f
+	    (lambda (x)
+	      (g x yy)))
+	   (g 
+	    (lambda (u v) 
+	      (kk u v f)))
+	   (t
+	     (tuple xx yy
+		    (lambda (w) 
+		      (f 
+		       (g w yy)))))
+	   )
+	  t))
+;;
+
+
+
+(defun testletrec (u :long j)
+  (letrec (
+	   (fa (lambda (x :long n)
+		 (debug_msg x "x inside fa")
+		 (if (<i n 0) 
+		     (if u x)
+		   (fb x 
+		       (-i n 1)))))
+	   (fb (lambda (y :long p) 
+		 (debug_msg y "y inside fb")
+		 (if (<=i p 0) 
+		     (tuple y tu)
+		   (fa y 
+		       (/i p 2)))))
+	   (tu (tuple ii 'zz ll))
+	   (ll (list ii '"string" tu))
+	   (ii (instance class_container 
+			 :container_value ll))
+	   )
+	  (fa u j)
+	  ))
+
+;; eof tletrec.melt

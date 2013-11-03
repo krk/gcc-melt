@@ -1,0 +1,211 @@
+;; -*- lisp -*-
+;; file test1.melt
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defprimitive == (a b) :long "((" a ") == (" b "))")
+;; boolean not
+(defprimitive not (:long i) :long "(!(" i "))")
+(defprimitive is_closure (clo) :long
+  " (melt_magic_discr((" clo ")) == OBMAG_CLOSURE)")
+;;;;; PAIR primitives
+;; test
+(defprimitive is_pair (pa) :long
+  "(melt_magic_discr((" pa ")) == OBMAG_PAIR)")
+;; head
+(defprimitive pair_head (pa) :value
+  "(melt_pair_head((" pa ")))")
+;; tail
+(defprimitive pair_tail (pa) :value
+  "(melt_pair_tail((" pa ")))")
+(defprimitive make_multiple (discr :long ln) :value
+  "(meltgc_new_multiple((" discr "), (" ln ")))")
+;; primitive to get the nth  in a multiple
+;(defprimitive multiple_nth (mul :long n) :value
+;    "(melt_multiple_nth((" mul "), (" n ")))")
+;; primitive to get the length of a multiple
+;(defprimitive multiple_length (v) :long
+;  "(melt_multiple_length((" v ")))")
+(defprimitive multiple_put_nth (mul :long n :value v) :void
+  " meltgc_multiple_put_nth((" mul "), (" n "), (" v "))")
+(defprimitive +i (:long a b) :long "((" a ") + (" b "))")
+;(defprimitive -i (:long a b) :long "((" a ") - (" b "))")
+;(defprimitive *i (:long a b) :long "((" a ") * (" b "))")
+;;; translate a pairlist to a tuple - with each element transformed by a function f (default the identity)
+
+(defun testandsetq (x y)
+  (if (and (is_pair x)
+	   (== x y))
+      (setq x y)))
+
+
+
+(defun tlamb_t2 (f_cl)
+  (lambda (y_arg) 
+    (f_cl y_arg)))
+
+
+(defprimitive tup1_pr2 (di t1) :value "meltgc_new_mult1((" di "), (" t1 "))")
+
+
+(defprimitive mkint_t2 (:long a) :value "meltgc_new_int(MELT_PREDEF(DISCR_INTEGER),(" a "))")
+
+
+(defclass my_class_root 
+ :predef CLASS_ROOT
+ :fields (root_f1 root_f2))
+
+(definstance ii my_class_root 
+  :root_f1 (mkint_t2 1001))
+
+
+(defun l2_t2 (x) 
+  (let ( (y1 
+	  (tup1_pr2 x 
+		    (mkint_t2 3))) 
+	 (y2 
+	  (tup1_pr2 x y1)) )
+    (tup1_pr2 y1 y2)))
+
+
+
+
+(defun coloopeven_t2 (x)
+  (if 
+      (tup1_pr2 x :somekeyword) 
+      (coloopodd_t2 x) 
+    x))
+
+(defun coloopodd_t2 (y)
+  (if 
+      (tup1_pr2 y y) 
+      (coloopeven_t2 y) 
+    'qqq))
+
+(defun tlet_t2 (u v)
+  (let ( (w (tup1_pr2 u u)) )
+    (tup1_pr2 w 
+	      (lambda (x) 
+		(if (tup1_pr2 x w) x)))))
+
+(defun and_t2 (x y z) (and x y z))
+
+(defun ff_t2 (t u) 
+  (tup1_pr2 t 
+	    (tup1_pr2 u u)))
+
+(defun tif_t2 (x y)
+  (if (tup1_pr2 x y)
+      (let ( (z (ff_t2 x x)) ) 
+	(tup1_pr2 y z))
+    y)
+)
+
+(defun ifl2_t2 (x) (if x (l2_t2 x)))
+
+(defun lam_t2 (x) (if (mkint_t2 x) (lambda (y) (l2_t2 (tup1_pr2 x y)))))
+
+
+(defun ll_t2 (y) (lambda (x) (ff_t2 x y)))
+
+
+(mkint_t2 1)
+
+(l2_t2 (mkint_t2 2))
+
+
+(defclass my_class_sub
+  :super my_class_root
+  :fields (sub_f3))
+
+(definstance mysub_instance my_class_sub
+  :root_f1 and_t2
+  :sub_f3 (mkint_t2 3)
+  :obj_num 2345
+  )
+
+(defun multiret_t2 (x) 
+  (return x my_class_root my_class_sub))
+
+(defun mi_t2 (v)
+  (make_instance my_class_root :root_f1 v))
+
+(defun l2mi_t2 (v) 
+  (l2_t2 
+   (make_instance my_class_root :root_f1 v :root_f2 'quotedf2)))
+
+
+
+(defun mi2_t2 (v) 
+  (if (tup1_pr2 v my_class_root) 
+      (make_instance my_class_root :root_f1 v)))
+
+
+(defun fii_t2 (v) (if (tup1_pr2 v ii) v))
+
+(let ((kk (mkint_t2 5))) (if (tup1_pr2 kk my_class_root) (mkint_t2 0)))
+
+
+
+(defun n1234_t2 (f) (f 1234))
+
+(defun xn23456_t2 (f x) (f x x 23456))
+
+
+(defun tl_t2 (v) (let ((x3 (mkint_t2 3))) (tup1_pr2 v x3)))
+
+
+
+
+(defun ts_t2 (v) (mkint_t2 1) (mkint_t2 2))
+
+(defun mm_t2 (p) 
+  (let ( (w (gg_t2 (gg_t2 p))) ) 
+    (if w (tup1_pr2 w p) p)))
+
+(defun kk_t2 (u)
+  (forever
+   lo 
+   (mkint_t2 u)
+   (exit lo u)
+   )
+  (tup1_pr2 u u)
+  )
+
+(defun mc_t2 (z) (multicall (rv :long ri) 
+			    (ff_t2 z (tl_t2 z)) 
+			    (tup1_pr2 rv (mkint_t2 ri))))
+
+
+
+(defun gg_t2 (z) (setq z (if z gg_t2)) (ff_t2 z z))
+
+
+(definstance t2inst my_class_root 
+  :root_f1 gg_t2)
+
+(definstance t2i1 my_class_root 
+  :root_f1 (mkint_t2 1))
+(definstance t2i2 my_class_root 
+  :root_f1 (mkint_t2 1))
+(definstance t2i3 my_class_root 
+  :root_f1 (mkint_t2 3))
+
+(defun ti_tk3 (x) (if (tup1_pr2 x t2i1) (if (tup1_pr2 x t2i2) (if (tup1_pr2 x t2i3) x))))
+
+(defun ti_clo2 (x y z) (lambda (u) (lambda (v) (lambda (w) (w x y z)))))
+
+(defun ti_t2 (z) (tup1_pr2 t2inst z))
+
+(defun tj_t2 (u) (tup1_pr2 u my_class_root))
+
+
+(defun testquotedsym () 'somesymbol)
+
+(defun testquotedkeyword () ':akeyword)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+#| ; SKIPPING
+; SKIPPED |#
+
+;; eof

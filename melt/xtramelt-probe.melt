@@ -1,0 +1,935 @@
+;; -*- Lisp -*-
+;; file xtramelt-probe.melt
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(comment "***
+    Copyright 2012 Free Software Foundation, Inc.
+    Contributed by Basile Starynkevitch <basile@starynkevitch.net>
+
+    This file is part of GCC.
+
+    GCC is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 3, or (at your option)
+    any later version.
+
+    GCC is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with GCC; see the file COPYING3.  If not see
+    <http://www.gnu.org/licenses/>.
+
+   This file interacts with the simple GTK probe (a graphical user
+   interface program to show compiled source files and information
+   attached to locations in them). See file
+   simplemelt-gtkmm-probe.cc (in contrib/ directory of the MELT
+   branch). 
+
+ ***")
+
+
+(defselector send_object_to_probe class_selector
+  :doc #{The selector $SEND_OBJECT_TO_PROBE is used for sending
+ arbitrary object receivers $RECV to the MELT probe. $SBUF is the
+ internal buffer. $VALSENDER is the closure to send values, and $DEPTH is the current depth}#
+  :formals (recv sbuf valsender :long depth)
+)
+
+(defun send_command_to_probe (symcmd :rest)
+  :doc #{Utility to send a command to the MELT probe}#
+  (debug "send_command_to_probe symcmd=" symcmd)
+  (assert_msg "check symcmd" (is_a symcmd class_symbol))
+  (shortbacktrace_dbg "send_command_to_probe" 12)
+  (let ( (outsbuf (make_strbuf discr_strbuf))
+	 )
+    (letrec 
+	(
+	 (a+num 
+	  (lambda (out :long n) (add2out out n)))
+	 (a+str 
+	  (lambda (out :cstring s) 
+	    (add2out out " \"")
+	    (add2out_cenconst out s)
+	    (add2out out "\" ")
+	    ))
+	 (a+val 
+	  (lambda (out val :long depth)
+	    (let ( (:long sucdepth (+i depth 1))
+		   )
+	      (cond 
+	       ;;
+	       ((null val) 
+		(add2out out " () "))
+	       ;;
+	       ((is_integerbox val) 
+		(add2out out (get_int val)))
+	       ;;
+	       ((is_string val)
+		(add2out out " \"")
+		(add2out_cencstring out val)
+		(add2out out "\" ")
+		)
+	       ;;
+	       ((is_multiple val)
+		(add2out out "(")
+		(foreach_in_multiple 
+		 (val)
+		 (comp :long ix)
+		 (if (>i ix 0) (add2out out " "))
+		 (a+val out val sucdepth))
+		(add2out out ")")
+		)
+	       ;;
+	       ((is_list val)
+		(add2out out "(")
+		(let ( (:long cnt 0)
+		       )
+		  (foreach_pair_component_in_list
+		   (val)
+		   (curpair curcomp)
+		   (if cnt (add2out out " "))
+		   (setq cnt (+i cnt 1))
+		   (a+val out curcomp sucdepth)
+		   )
+		  (add2out out ")")
+		  )
+		)
+	       ;;
+	       ((is_closure val)
+		(val out))
+	       ((is_a val class_named)
+		(add2out out (get_field :named_name val))
+		)
+	       ((is_object val)
+		(send_object_to_probe val out a+val sucdepth))
+	       )
+	      )
+	    )
+	  )
+	 )				;end letrec bindings
+      (a+val outsbuf symcmd)
+      (forever 
+       argloop
+       (add2out outsbuf " ")
+       (debug "send_command_to_probe variadic#" (variadic_index) " ctype=" (variadic_ctype 0))
+       (variadic 
+	( ()
+	  (debug "send_command_to_probe end variadic")
+	  (exit argloop))
+	( (:long l)
+	  (debug "send_command_to_probe variadic long l=" l)
+	  (a+num outsbuf l))
+	( (:cstring s)
+	  (debug "send_command_to_probe variadic string s=" s)
+	  (a+str outsbuf s))
+	( (:value v)
+	  (debug "send_command_to_probe variadic value v=" v)
+	  (a+val outsbuf v 0))
+	( :else
+	  (assert_msg "invalid variadic in send_command_to_probe" ()))))
+      (add2out outsbuf "\n\n")		;to terminate the command
+      (debug "send_command_to_probe outsbuf=" outsbuf)
+      (code_chunk sendcmd  #{ /* $SENDCMD send command to probe */ 
+                  melt_send_command_strbuf_to_probe ($OUTSBUF)}#)
+      )    
+    )
+  )
+
+
+(defclass class_probed_file
+  :doc #{$CLASS_PROBED_FILE describes a source file known to the
+  probe. $PROBEDFILE_RANK is its unique rank inside $CLASS_PROBE_DATA,
+  $PROBEDFILE_PATH is the given -perhaps relative- path,
+  $PROBEDFILE_REALPATH is the real absolute file path, 
+  $PROBEDFILE_LINESBUCKET is the bucket of interesting lines and
+  $PROBEDFILE_DATA is available to clients.}#
+  :super class_proped
+  :fields (
+	   probedfile_rank		;the rank
+	   probedfile_path		;the first given path
+	   probedfile_realpath		;the real path
+	   probedfile_linesbucket	;bucket of interesting lines,
+					;values are tuples of
+					;class_probed_interesting_location
+	   probedfile_data		;supplementary client data
+	   )
+)
+
+(defclass class_probed_interesting_location
+  :doc #{$CLASS_PROBED_INTERESTING LOCATION describes an interesting source file location.
+}#
+  :super class_proped
+  :fields (probiloc_file 		;the instance of class_probed_file
+           probiloc_lineno		;boxed line number
+	   probiloc_column		;boxed column number
+	   probiloc_rank 		;unique rank in probedata_ilocvec
+	   probiloc_closinfolist	;list of closures to give information
+	   ))
+
+(defclass class_probe_data 
+  :doc #{Singleton $CLASS_PROBE_DATA for probe related
+  data. $PROBEDATA_FILESVEC is a tuple of $CLASS_PROBED_FILE-s, and
+  $PROBEDATA_FILEDICT is a dictionnary mapping given and real paths to
+  them. $PROBEDATA_AUX is an auxiliary data. $PROBEDATA_CMDTOPROBEFD
+  and $PROBEDATA_REQFROMPROBEFD gives the boxed integers for command &
+  request file descriptors to & from the probe. $PROBEDATA_ILOCVEC is a tuple of $CLASS_PROBED_INTERESTING_LOCATION}#
+  :super class_proped
+  :fields 
+  (
+   ;; bijective association of file real paths and indexes
+   probedata_filesvec 			;;the vector of real probed files
+   probedata_filedict			;;the dictionnary of real probed files
+   ;; dictionnary of request handlers
+   probedata_reqhdict			;;dictionnary of request handlers
+   ;; boxed file descriptor for commands to probe
+   probedata_cmdtoprobefd
+   ;; boxed file descriptor for requests from probe
+   probedata_reqfromprobefd
+   probedata_ilocvec			;vector of interesting locations
+   probedata_nbiloc			;number of interesting locations
+   ;; auxiliary data
+   probedata_aux
+))
+
+
+(definstance probe_data_ref class_reference)
+
+(defun probe_get_data ()
+  :doc #{function to retrieve the probe data, or null.}#
+  !probe_data_ref)
+
+
+(defun probe_register_request_verb (symb clos)
+  :doc #{Register into probe for verb named by $SYMB the closure $CLOS to handle request.}#
+  (debug "probe_register_request_verb symb=" symb " clos=" clos)
+  (let ( (probdata (probe_get_data))
+	 )
+    (debug "probe_register_request_verb probdata=" probdata)
+    (if (is_a probdata class_probe_data)
+	(let ( (reqhdict (get_field :probedata_reqhdict probdata))
+	       )
+	  (if (is_a symb class_named)
+	      (if (is_closure clos)
+		  (let ( (symbnam (get_field :named_name symb))
+			 )
+		    (mapstring_putstr reqhdict symbnam clos)
+		    (debug "probe_register_request_verb updated reqhdict=" reqhdict)
+		    )))))))
+
+
+;;;;;;;;;;;;;;;;
+(defun probe_get_file_of_name (probedata name)
+  :doc #{Given a source file $NAME, gives its corresponding
+  $CLASS_PROBED_FILE, perhaps creating it and displaying it in the
+  probe}#
+  (if (null probedata)
+    (setq probedata (probe_get_data)))
+  (debug "probe_get_file_of_name probedata=" probedata "\n* name=" name)
+  (assert_msg "check probedata" (is_a probedata class_probe_data))
+  (assert_msg "check name" (is_string name))
+  (let (
+	(realpath (make_string_real_access_path_value discr_string name))
+	(filesvec (get_field :probedata_filesvec probedata))
+	(filedict (get_field :probedata_filedict probedata))
+	(:long veclen (multiple_length filesvec))
+	(:long pos 0)
+	)
+    (debug "probe_get_file_of_name realpath=" realpath " filedict=" filedict)
+    (assert_msg "check realpath" realpath)
+    ;;
+    (let ( (probfil (mapstring_getstr filedict realpath))
+	   )
+      (when probfil
+	(debug "probe_get_file_of_name return found probfil=" probfil)
+	(assert_msg "check probfil" (is_a probfil class_probed_file))
+	(return probfil)
+	)
+      ;; grow filesvec if needed, i.e. if filesvec's last slot is filled
+      (if (multiple_nth filesvec -1)
+	  (let ( (:long newlen (+i 10 (/i (*i veclen 3) 2)))
+		 (newvec (make_multiple discr_multiple newlen))
+		 )
+	    (foreach_in_multiple
+	     (filesvec)
+	     (curfil :long fix)
+	     (multiple_put_nth newvec fix curfil))
+	    (setq filesvec newvec)
+	    (put_fields probedata :probedata_filesvec newvec)))
+      ;; find a position in pos, fill and return it
+      (foreach_in_multiple
+       (filesvec)
+       (curfil :long filix)
+       (if filix			;skip slot 0
+	   (unless curfil
+	     (let ( 
+		   (linbuck  (make_bucketlong discr_bucket_longs 15))
+		   (newfil
+		    (instance class_probed_file
+			      :probedfile_rank (make_integerbox discr_constant_integer
+								filix)
+			      :probedfile_path name
+			      :probedfile_realpath realpath
+			      :probedfile_linesbucket linbuck
+			      :probedfile_data ()
+			      ))
+		   )
+	       (bucketlong_setaux linbuck newfil)
+	       (multiple_put_nth filesvec filix newfil)
+	       (mapstring_putstr filedict name newfil)
+	       (mapstring_putstr filedict realpath newfil)
+	       (put_int newfil filix)
+	       (debug "probe_get_file_of_name made newfil=" newfil)
+	       (send_command_to_probe 'SHOWFILE_pcd name filix)
+	       (return newfil)
+	       ))
+	 )))))
+
+
+
+
+;;;;;;;;;;;;;;;; get or build an interesting location
+(defun probe_get_interesting_location (probedata file :long lineno col)
+  :doc #{Return the instance of $CLASS_PROBED_INTERESTING_LOCATION
+  with the $PROBEDATA for given $FILE at line $LINENO and column
+  $COL. May register a new location at the probe.}#
+  (if (null probedata)
+      (setq probedata (probe_get_data)))
+  (debug "probe_get_interesting_location probedata=" probedata 
+	 " file=" file " lineno=" lineno " col=" col)
+  (assert_msg "check probedata" (is_a probedata class_probe_data))
+  (if (is_string file)
+      (let ( (filename file)
+	     (pfile (probe_get_file_of_name probedata filename))
+	     )
+	(debug "probe_get_interesting_location pfile=" pfile)
+	(setq file pfile)))
+  (assert_msg "check file" (is_a file class_probed_file))
+  (assert_msg "check lineno" (>=i lineno 1))
+  (let (
+	(linbuck (get_field :probedfile_linesbucket file))
+	(loctup (bucketlong_get linbuck lineno))
+	)
+    (assert_msg "check linbuck" (is_bucketlong linbuck))
+    (unless (is_multiple loctup)
+      (setq loctup (make_multiple discr_multiple 3))
+      (let ( (newlinbuck (bucketlong_put linbuck lineno loctup))
+	     )
+	(when (!= newlinbuck linbuck)
+	  (bucketlong_setaux newlinbuck file)
+	  (put_fields file :probedfile_linesbucket newlinbuck)
+	  (setq linbuck newlinbuck)))
+      )
+    ;; find inside loctup the iloc if existing
+    (debug "probe_get_interesting_location loctup=" loctup) 
+    (foreach_in_multiple
+     (loctup)
+     (curloc :long locix)
+     (when curloc
+       (assert_msg "check curloc" 
+		   (is_a curloc class_probed_interesting_location))
+       (assert_msg "check curloc file"
+		   (== (get_field :probiloc_file curloc) file))
+       (assert_msg "check curloc lineno"
+		   (==i (get_int (get_field :probiloc_lineno curloc)) lineno))
+       (when (==i (get_int (get_field  :probiloc_column curloc)) col)
+	 (debug "probe_get_interesting_location return found curloc=" curloc)
+	 (return curloc))
+       ))
+    ;; build and insert a new interesting location
+    (let ( (newiloc (instance class_probed_interesting_location
+			      :probiloc_file file
+			      :probiloc_lineno (make_integerbox discr_constant_integer lineno)
+			      :probiloc_column (make_integerbox discr_constant_integer col)
+			      :probiloc_rank () ;filled later
+			      ))
+	   (lastloc (multiple_nth loctup -1))
+	   )
+      (if lastloc
+          ;; the loctup of current line is full
+	  (let ( (:long loctuplen (multiple_length loctup))
+		 (:long newtuplen (+i (+i loctuplen 2) (/i loctuplen 5)))
+		 (newtup (make_multiple discr_multiple newtuplen))
+		 )
+	    ;; copy the old loctup
+	    (foreach_in_multiple
+	     (loctup)
+	     (curloc :long ix)
+	     (multiple_put_nth newtup ix curloc))
+	    (setq loctup newtup)
+	    ;; update the bucket entry
+	    (let ( (newlinbuck (bucketlong_put linbuck lineno loctup))
+		   )
+	      (when (!= newlinbuck linbuck)
+		(bucketlong_setaux newlinbuck file)
+		(put_fields file :probedfile_linesbucket newlinbuck)
+		(setq linbuck newlinbuck)))
+	    ;; insert newiloc
+	    (multiple_put_nth loctup loctuplen newiloc)
+	    (put_int newiloc loctuplen)
+	    ))
+      ;; put the newiloc in an empty position of loctup
+      (foreach_in_multiple
+       (loctup)
+       (curloc :long ix)
+       (unless curloc
+	 (multiple_put_nth loctup ix newiloc)
+	 (put_int newiloc ix)
+	 (setq ix -1) ;;to break the forach_in_multiple
+	 (void)
+	 ))
+      (debug "probe_get_interesting_location loctup=" loctup 
+	     " newiloc=" newiloc)
+      ;; insert the newiloc inside the vector of interesting locations
+      (let ( (ilocvec (get_field :probedata_ilocvec probedata))
+	     (:long ilocveclen (multiple_length ilocvec))
+	     (:long nbiloc (get_int (get_field :probedata_nbiloc probedata)))
+	     (:long newrank (+i nbiloc 1))
+	     (:long filerank (get_int (get_field :probedfile_rank file)))
+	     )
+	(assert_msg "check ilocveclen" (>i ilocveclen 2))
+	;; grow the vector if it is full
+	(if (multiple_nth ilocvec -1)
+	    (let ( (:long newveclen (+i 11 (+i ilocveclen (/i ilocveclen 4))))
+		   (newvec (make_multiple discr_multiple newveclen))
+		   )
+	      (foreach_in_multiple 
+	       (ilocvec)
+	       (curiloc :long ilocix)
+	       (multiple_put_nth newvec ilocix curiloc))
+	      (put_fields probedata :probedata_ilocvec newvec)
+	      (setq ilocvec newvec)
+	      (setq ilocveclen newveclen)))
+	(debug "probe_get_interesting_location newrank=" newrank " ilocvec=" ilocvec)
+	(assert_msg "check newrank" (<i newrank ilocveclen))
+	(assert_msg "check empty newrank" (null (multiple_nth ilocvec newrank)))
+	(let ( (boxnewrank (make_integerbox discr_constant_integer newrank))
+	       )
+	  (put_fields newiloc
+		      :probiloc_rank boxnewrank
+		      :probiloc_closinfolist (make_list discr_list))
+	  (multiple_put_nth ilocvec newrank newiloc)
+	  (put_fields probedata
+		      :probedata_nbiloc boxnewrank))
+	(debug "probe_get_interesting_location newiloc=" newiloc
+	       " newrank=" newrank " filerank=" filerank " lineno=" lineno " col=" col)
+	(send_command_to_probe 'MARKLOCATION_pcd newrank filerank lineno col)
+	(debug "probe_get_interesting_location return newiloc=" newiloc)
+	(return newiloc)
+	))))
+
+
+;; get the interesting location at a given expression or declaration tree
+(defun probe_tree_interesting_location  (probedata :tree tree)
+  :doc #{Get the interesting location of
+  $CLASS_PROBED_INTERESTING_LOCATION with $PROBEDATA at a given $TREE
+  -expression or declaration for GCC}#
+  (if (null probedata)
+      (setq probedata (probe_get_data)))
+  (debug "probe_tree_interesting_location probedata=" probedata " tree=" tree)
+  (unless tree (return))
+  (let ( (filev ())
+	 (:long lineno 0)
+	 (:long col 0)
+	 )
+    (code_chunk 
+     treeiloch
+     #{ /* probe_tree_interesting_location $TREEILOCH */
+     location_t $TREEILOCH#_loc = UNKNOWN_LOCATION ;
+     if (DECL_P($TREE))
+       $TREEILOCH#_loc = DECL_SOURCE_LOCATION ($TREE) ;
+     else if (EXPR_P($TREE))
+       $TREEILOCH#_loc = EXPR_LOCATION ($TREE) ;
+     if ($TREEILOCH#_loc != UNKNOWN_LOCATION) 
+       {
+         const char* $TREEILOCH#_file = LOCATION_FILE ($TREEILOCH#_loc) ;
+         $FILEV =
+           meltgc_new_string ((meltobject_ptr_t) MELT_PREDEF (DISCR_STRING), 
+	  		      $TREEILOCH#_file) ;
+         $LINENO = LOCATION_LINE ($TREEILOCH#_loc) ;
+         $COL = LOCATION_COLUMN ($TREEILOCH#_loc) ;
+       }
+     else
+       $FILEV = NULL, $LINENO = 0		;
+     /* end probe_tree_interesting_location $TREEILOCH */
+     }#)			;
+    (debug "probe_tree_interesting_location filev=" filev
+	   " lineno=" lineno " col=" col)
+    ;;
+    (if filev
+	(let ( (iloc (probe_get_interesting_location probedata 
+						     filev lineno col))
+	       )
+	  (debug "probe_tree_interesting_location return iloc=" iloc)
+	  (return iloc)
+	  ))))
+
+;;;;;;;;;;;;;;;;
+;; get the interesting location at a given gimple
+(defun probe_gimple_interesting_location  (probedata :gimple gimple)
+  :doc #{Get the interesting location of
+  $CLASS_PROBED_INTERESTING_LOCATION with $PROBEDATA at a given $GIMPLE}#
+  (if (null probedata)
+      (setq probedata (probe_get_data)))
+  (debug "probe_gimple_interesting_location probedata=" probedata
+	 " gimple=" gimple)
+  (unless gimple (return))
+  (let ( (filev ())
+	 (:long lineno 0)
+	 (:long col 0)
+	 )
+    (code_chunk 
+     gimpiloch
+     #{ /* probe_gimple_interesting_location start $GIMPILOCH */
+     location_t $GIMPILOCH#_loc = UNKNOWN_LOCATION;
+     if ($GIMPLE) 
+       $GIMPILOCH#_loc = gimple_location ($GIMPLE);
+     if ($GIMPILOCH#_loc != UNKNOWN_LOCATION) 
+       {
+         const char* $GIMPILOCH#_file = LOCATION_FILE ($GIMPILOCH#_loc) ;
+         $FILEV =
+           meltgc_new_string ((meltobject_ptr_t) MELT_PREDEF (DISCR_STRING), 
+	    		      $GIMPILOCH#_file) ;
+         $LINENO = LOCATION_LINE ($GIMPILOCH#_loc) ;
+         $COL = LOCATION_COLUMN ($GIMPILOCH#_loc) ;
+       }
+     else
+       $FILEV = NULL, $LINENO = 0 ;
+     /* end probe_gimple_interesting_location $GIMPILOCH */
+     }#)
+    (debug "probe_gimple_interesting_location filev=" filev
+	   " lineno=" lineno " col=" col)
+    ;;
+    (if filev
+	(let ( (iloc (probe_get_interesting_location probedata 
+						     filev lineno col))
+	       )
+	  (debug "probe_gimple_interesting_location return iloc=" iloc)
+	  (return iloc)
+	  ))))
+
+
+(defun probe_interesting_location_add_informer (probeloc closinfo)
+  (debug "probe_interesting_location_add_informer probeloc=" probeloc " closinfo=")
+  (if (null probeloc) (return))
+  (if (null closinfo) (return))
+  (assert_msg "check probeloc" (is_a probeloc  class_probed_interesting_location))
+  (assert_msg "check closinfo" (is_closure closinfo))
+  (let ( (lisinfo (get_field :probiloc_closinfolist probeloc))
+	 )
+    (assert_msg "check lisinfo" (is_list lisinfo))
+    (list_append lisinfo closinfo)
+))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; the internal request processor
+(defun probe_request_processor (inch inlist)
+  (debug "probe_request_processor start inch=" inch " inlist=" inlist)
+  (shortbacktrace_dbg "probe_request_processor" 9)
+  (assert_msg "check inch" (is_a inch class_input_channel_handler))
+  (let ( (probedata (get_field :inch_data inch))
+	 (:long probereqfd (get_int inch))
+	 (intup (if inlist (list_to_multiple inlist discr_multiple)))
+	 (reqverb (multiple_nth intup 0))
+	 )
+    (assert_msg "check probedata" (is_a probedata class_probe_data))
+    (unless inlist
+      (debug "probe_request_processor end of input probereqfd=" probereqfd)
+      (set_ref probe_data_ref ())
+      (put_fields probedata 
+		  :probedata_cmdtoprobefd ()
+		  :probedata_reqfromprobefd ())
+      (code_chunk probestop_chk #{ /* probe_request_processor $PROBESTOP_CHK */ 
+		  melt_probe_stop ()	;
+		  }#)
+      (debug "probe_request_processor stopped probe")
+      (return)
+      )
+    (debug "probe_request_processor reqverb=" reqverb " intup=" intup)
+    ;; the quit_prq verb is deeply wired in
+    (when (== reqverb 'quit_prq)
+      (set_ref probe_data_ref ())
+      (debug "probe_request_processor quitting probe")
+      (return)
+      )
+    (let ( (reqdict (get_field :probedata_reqhdict probedata))
+	   (verbname (get_field :named_name reqverb))
+	   (reqclos (mapstring_getstr reqdict verbname))
+	   )
+      (debug "probe_request_processor reqdict=" reqdict " verbname=" verbname " reqclos=" reqclos)
+      (when (is_closure reqclos)
+	(debug "probe_request_processor running closure for reqverb=" reqverb " intup=" intup)
+	(reqclos intup)
+	(debug "probe_request_processor done reqverb=" reqverb)
+	(return))
+      (warningmsg_strv "unknown probe request verb" verbname)
+      )))
+
+
+
+(defun probe_at_exit (res que)
+  (debug "probe_at_exit res=" res " que=" que)
+  (shortbacktrace_dbg "probe_at_exit" 10)
+  (let ( (:long loopcnt 0) 
+	 )
+    (forever 
+     probendloop
+     (increment loopcnt 1)
+     (debug "probe_at_exit loopcnt=" loopcnt)
+     (let ( (probedata (probe_get_data))
+	    )
+       (debug "probe_at_exit loop probedata=" probedata
+	      " loopcnt=" loopcnt)
+       (unless probedata (exit probendloop))
+       (debug "probe_at_exit loopcnt=" loopcnt " before hook_poll_inputs")
+       (hook_poll_inputs 5000)
+       (debug "probe_at_exit loopcnt=" loopcnt " after hook_poll_inputs")
+       ))
+    (debug "probe_at_exit ended loopcnt=" loopcnt)
+    ))
+
+(defun show_version_probe (tup)
+  (debug "show_version_probe tup=" tup)
+  (let ( (sbuf (make_strbuf discr_strbuf))
+	 )
+    (add2out sbuf "MELT version=" (melt_version_str))
+    (send_command_to_probe 'SETSTATUS_pcd (strbuf2string discr_string sbuf))))
+
+
+(defun info_location_probe (tup)
+  (debug "info_location_probe tup=" tup)
+  (assert_msg "check tup len" (>=i (multiple_length tup) 2))
+  (let ( (:long locnum (get_int (multiple_nth tup 1)))
+	 (probdata (probe_get_data))
+	 (iloc (multiple_nth (get_field :probedata_ilocvec probdata) locnum))
+	 )
+    (debug "info_location_probe locnum=" locnum " probdata=" probdata "\n iloc=" iloc)
+    (assert_msg "check locnum" (>i locnum 0))
+    (assert_msg "check iloc" (is_a iloc class_probed_interesting_location))
+    ;; should send one STARTINFOLOC_pcd command followed by zero, one or
+    ;; more ADDINFOLOC_pcd commands
+    (send_command_to_probe 'STARTINFOLOC_pcd locnum)
+    (debug "info_location_probe incomplete iloc=" iloc)
+    (let ( (closlist (get_field :probiloc_closinfolist iloc))
+	   (:long infocnt 0)
+	   )
+      (debug "info_location_probe closlist=" closlist)
+      (foreach_pair_component_in_list
+       (closlist)
+       (curpair curclos)
+       (debug "info_location_probe curclos=" curclos)
+       (if (is_closure curclos)
+	   (multicall
+	    (curcont curtit)
+	    (curclos iloc)
+	    (increment infocnt 1)
+	    (debug "info_location_probe infocnt=" infocnt " curcont=" curcont " curtit=" curtit)
+	    (let ( (titsbuf (make_strbuf discr_strbuf))
+		   )
+	      (add2out titsbuf infocnt ":")
+	      (if (is_string curtit) (add2out titsbuf curtit))
+	      (let ( (tit (strbuf2string discr_string titsbuf))
+		     )
+		(debug "info_location_probe locnum=" locnum " tit=" tit " curcont=" curcont " before command to probe")
+		(send_command_to_probe 'ADDINFOLOC_pcd locnum tit curcont)
+		)))			;end foreach_pair_component_in_list
+	 (debug "info_location_probe done iloc=" iloc)
+	 )))))
+
+
+
+(defun start_probe ()
+  :doc #{function to start the probe. Return the probe data. Can be used by any mode wanting the probe.}#
+  (let ( (oldprobedata !probe_data_ref)
+	 )
+  (debug "start_probe oldprobedata=" oldprobedata)
+  (when oldprobedata 
+    (assert_msg "check oldprobedata" (is_a oldprobedata class_probe_data))
+    (return oldprobedata))
+  (let (
+        (mainfilename (make_string_real_access_path discr_string (main_input_filename)))
+        (filesvec  (make_multiple discr_multiple 10))
+        (filedict (make_mapstring discr_map_strings 17))
+        (probedata (instance class_probe_data
+			     :probedata_reqhdict (make_mapstring discr_map_strings 53)
+                             :probedata_filesvec filesvec
+                             :probedata_filedict filedict
+			     :probedata_ilocvec (make_multiple discr_multiple 10)
+			     :probedata_nbiloc '0))
+	(:long toprobenumfd -1)
+	(:long fromprobenumfd -1)
+        )
+    (debug "start_probe probedata=" probedata " maininput=" (main_input_filename))
+    (code_chunk probestart_chk #{ /* probe_docmd $PROBESTART_CHK */
+		int $PROBESTART_CHK#_toprobefd = -1, $PROBESTART_CHK#_fromprobefd = -1 ;
+		melt_probe_start (NULL, &$PROBESTART_CHK#_toprobefd, &$PROBESTART_CHK#_fromprobefd) ;
+		if ($PROBESTART_CHK#_toprobefd > 0) 
+		$TOPROBENUMFD = (long) $PROBESTART_CHK#_toprobefd ;
+		if ($PROBESTART_CHK#_fromprobefd > 0)
+		$FROMPROBENUMFD = (long) $PROBESTART_CHK#_fromprobefd ;
+		}#)
+    (when (<i fromprobenumfd 0)
+      (debug "start_probe failed to start probe fromprobenumfd=" fromprobenumfd
+	     " toprobenumfd=" toprobenumfd)
+      (return))
+    (put_fields probedata
+		:probedata_cmdtoprobefd (make_integerbox discr_constant_integer toprobenumfd)
+		:probedata_reqfromprobefd (make_integerbox discr_constant_integer fromprobenumfd))
+    (set_ref probe_data_ref probedata)
+    (register_input_channel_handler probe_request_processor probedata fromprobenumfd)
+    (probe_register_request_verb 'VERSION_prq  show_version_probe)
+    (probe_register_request_verb 'INFOLOCATION_prq info_location_probe)
+    (debug "start_probe registered probe_request_processor=" probe_request_processor 
+	   " with probedata=" probedata " fromprobenumfd=" fromprobenumfd)
+    (let ( (mainprfil (probe_get_file_of_name probedata mainfilename))
+	   )
+      (debug "start_probe mainprfil=" mainprfil)
+      ;;sleep a tiny bit to let the probe show some windows...
+      (code_chunk sleepstartprobe_chk #{ /* start_probe $SLEEPSTARTPROBE_CHK */
+		  usleep (65000);
+		  }#)
+      (at_exit_last probe_at_exit)
+      (return probedata)
+      ))))
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defun scanprobe_exec (pass)
+  (debug "scanprobe_exec start pass=" pass)
+  (let ( (probdat (probe_get_data))
+	 )
+    (with_cfun_decl 
+     ()
+     (:tree cfundecl)
+     (debug "scanprobe_exec cfundecl=" cfundecl " probdat=" probdat)
+     ;; the function declaration is intersting
+     (let ( (ilfundecl (probe_tree_interesting_location probdat cfundecl)) 
+	    (declval (make_tree discr_tree cfundecl))
+	    )
+       (debug "scanprobe_exec ilfundecl=" ilfundecl)
+       (probe_interesting_location_add_informer
+	ilfundecl
+	(lambda (iloc)
+	  (debug "scanprobe_exec/declambda iloc=" iloc)
+	  (let ( (sbuf (make_strbuf discr_strbuf))
+		 )
+	    (output_tree sbuf (tree_content declval))
+	    (debug "scanprobe_exec/declambda sbuf=" sbuf)
+	    (return (strbuf2string discr_string sbuf) '"Function Declaration")
+	    )))
+       )
+     ;; every basic block of the current cfun is interesting
+     (each_bb_current_fun 
+      ()
+      (:basic_block bb)
+      (debug "scanprobe_exec bb=" bb)
+      (let (
+	    (:long bbix (basicblock_index bb))
+	    (:gimple_seq bbgs (gimple_seq_of_basic_block bb))
+	    (gimpcount (make_integerbox discr_integer 0))
+	    ;; we need to copy the sequence, because a basic block
+	    ;; will eventually lose it...
+	    (:gimple_seq gscopy (gimple_seq_copy bbgs))
+	    (bbixbox (make_integerbox discr_constant_integer bbix))
+	    (bbgimpletitle (string4out discr_string "Basic Block #" bbix " Gimple"))
+	    (bbgimpleseqtitle (string4out discr_string "Basic Block #" bbix " Gimple Seq"))
+	    (bbtreetitle (string4out discr_string "Basic Block #" bbix " Tree"))
+	    (:long nbsuccbb (basicblock_nb_succ bb))
+	    (:long nbpredbb (basicblock_nb_pred bb))
+	    )
+	(debug "scanprobe_exec gscopy=" gscopy " bbix=" bbix " bb=" bb)
+	;; show the gimpleseq at first gimple if non-empty
+	(let ( (:gimple gfirst (gimple_seq_first_stmt gscopy))
+	       )
+	  (if gfirst
+	      (let ( (gsbox (make_gimpleseq discr_gimple_seq gscopy))
+		     )
+		(debug "scanprobe_exec gfirst=" gfirst)
+		;; show the gimpleseq
+		(probe_interesting_location_add_informer
+		 (probe_gimple_interesting_location probdat gfirst)
+		 (lambda (iloc)
+		   (debug "scanprobe_exec/lambda-gimpleseq/lambda-loc iloc=" iloc)
+		   (shortbacktrace_dbg "scanprobe_exec/lambda-gimpleseq/lambda-loc" 15)
+		   (let ( (sbuf (make_strbuf discr_strbuf)) 
+			  )
+		     (output_gimpleseq sbuf (gimpleseq_content gsbox))
+		     (return (strbuf2string discr_string sbuf) bbgimpleseqtitle)
+		     )))
+
+		;; show successor edges, if relevant
+		(if nbsuccbb
+		    (let ( 
+			  )
+		      (compile_warning "incomplete show successor edges")
+		      ))
+		)
+	    ))
+	;; walk the gimpleseq to show gimples inside
+	(walk_gimple_seq_unique_tree 
+	 probdat gscopy
+	 (lambda (pd :gimple g)
+	   (let ( (:long cntgimp (get_int gimpcount))
+		  )
+	     (put_int gimpcount (+i cntgimp 1)))
+	   (debug "scanprobe_exec/lambda-stmt g=" g " gimpcount=" gimpcount)
+	   (let ( (gbox (make_gimple discr_gimple g))
+		  (uniqgimpcount
+		   (make_integerbox discr_constant_integer (get_int gimpcount)))
+		  )
+	     (probe_interesting_location_add_informer
+	      (probe_gimple_interesting_location probdat g)
+	      (lambda (iloc)
+		(debug "scanprobe_exec/lambda-stmt/lambda-loc iloc=" iloc " gbox=" gbox)
+		(shortbacktrace_dbg "scanprobe_exec/lambda-stmt/lambda-loc" 15)
+		(let ( (gsbuf (make_strbuf discr_strbuf))
+		       (titbuf (make_strbuf discr_strbuf))
+		       )
+		  (output_gimple gsbuf (gimple_content gbox))
+		  (add2out titbuf bbgimpletitle " ##" (get_int uniqgimpcount))
+		  (return (strbuf2string discr_string gsbuf) 
+			  (strbuf2string discr_string titbuf))
+		  )))
+	     (return)
+	     ))
+	 (lambda (pd :tree tr)
+	   (debug "scanprobe_exec/lambda-tree tr=" tr)
+	   (let ( (tbox (make_tree discr_tree tr))
+		  )
+	     (probe_interesting_location_add_informer
+	      (probe_tree_interesting_location probdat tr)
+	      (lambda (iloc)
+		(debug "scanprobe_exec/lambda-tree/lambda-loc iloc=" iloc " tbox=" tbox)
+		(shortbacktrace_dbg "scanprobe_exec/lambda-tree/lambda-loc" 15)
+		(let ( (tsbuf (make_strbuf discr_strbuf))
+		       )
+		  (output_tree tsbuf (tree_content tbox))
+		  (return (strbuf2string discr_string tsbuf) bbtreetitle)
+		  )))
+	     (return)
+	     ))
+	 )
+	(debug "scanprobe_exec walked gscopy=" gscopy)
+	))
+     )))
+
+(defun install_scanprobe_pass ()
+  (let ( (scpropass (instance class_gcc_gimple_pass
+			      :named_name '"melt_scanprobe_pass"
+			      :gccpass_gate ()
+			      :gccpass_exec scanprobe_exec
+			      :gccpass_data ())
+		    )
+	 )
+  (debug "install_scanprobe_pass start scpropass=" scpropass)
+  (install_melt_pass_in_gcc scpropass :after '"*build_cgraph_edges" 0)
+  (debug "install_scanprobe_pass installed scpropass=" scpropass)
+  (return scpropass)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;; show also the SSA form of the gimples
+(defun scanssaprobe_exec (pass)
+  (debug "scanssaprobe_exec start pass=" pass)
+  (let ( (probdat (probe_get_data))
+	 )
+    (with_cfun_decl 
+     ()
+     (:tree cfundecl)
+     ;; every basic block of the current cfun is interesting
+     (each_bb_current_fun 
+      ()
+      (:basic_block bb)
+      (debug "scanssaprobe_exec bb=" bb)
+      (let (
+	    (:long bbix (basicblock_index bb))
+	    (:gimple_seq bbgs (gimple_seq_of_basic_block bb))
+	    (gimpcount (make_integerbox discr_integer 0))
+	    (bbgimpletitle (string4out discr_string "Basic Block #" bbix " Gimple/SSA"))
+	    )
+	(debug "scanssaprobe_exec bbix=" bbix " bbgs=" bbgs)
+	;; walk the gimpleseq to show gimple/SSAs inside
+	(walk_gimple_seq_unique_tree 
+	 probdat bbgs
+	 (lambda (pd :gimple g)
+	   (let ( (:long cntgimp (get_int gimpcount))
+		  )
+	     (put_int gimpcount (+i cntgimp 1)))
+	   (debug "scanssprobe_exec/lambda-stmt g=" g " gimpcount=" gimpcount)
+	   (let ( (gbox (make_gimple discr_gimple g))
+		  (uniqgimpcount
+		   (make_integerbox discr_constant_integer (get_int gimpcount)))
+		  )
+	     (probe_interesting_location_add_informer
+	      (probe_gimple_interesting_location probdat g)
+	      (lambda (iloc)
+		(debug "scanssaprobe_exec/lambda-stmt/lambda-loc iloc=" iloc " gbox=" gbox)
+		(shortbacktrace_dbg "scanssprobe_exec/lambda-stmt/lambda-loc" 15)
+		(let ( (gsbuf (make_strbuf discr_strbuf))
+		       (titbuf (make_strbuf discr_strbuf))
+		       )
+		  (output_gimple gsbuf (gimple_content gbox))
+		  (add2out titbuf bbgimpletitle " ##" (get_int uniqgimpcount))
+		  (return (strbuf2string discr_string gsbuf) 
+			  (strbuf2string discr_string titbuf))
+		  )))
+	     (return)
+	     ))
+	 ())
+	(debug "scanssprobe_exec done bbix=" bbix)))
+     )))
+
+(defun install_scanssaprobe_pass ()
+  (let ( (scpropass (instance class_gcc_gimple_pass
+			      :named_name '"melt_scanssaprobe_pass"
+			      :gccpass_gate ()
+			      :gccpass_exec scanssaprobe_exec
+			      :gccpass_data ())
+		    )
+	 )
+  (debug "install_scanssaprobe_pass start scpropass=" scpropass)
+  (install_melt_gcc_pass scpropass "before" "release_ssa" 0)
+  (debug "install_scanssaprobe_pass installed scpropass=" scpropass)
+  (return scpropass)))
+  
+;;;;;;;;;;;;;;;; mode to start the probe
+(defun probe_docmd (cmd moduldata)
+  (debug "probe_docmd cmd=" cmd " moduldata=" moduldata)
+  (start_probe)
+  (install_scanprobe_pass)
+  (debug "probe_docmd after scanprobe cmd=" cmd)
+  (install_scanssaprobe_pass)
+  (debug "probe_docmd done cmd=" cmd)
+  (return :true)
+  )
+
+
+(definstance probe_mode
+  class_melt_mode
+  :named_name '"probe"
+  :meltmode_help '"enable the simple interactive probe; see also the @code{-f[plugin-arg-]melt-probe} argument"
+  :meltmode_fun probe_docmd
+)
+(install_melt_mode probe_mode)
+;;;;;;;;;;;;;;;;
+
+
+
+(export_class 
+ class_probed_file 
+ class_probe_data 
+ class_probed_interesting_location)
+
+(export_values 
+ probe_get_data
+ probe_get_file_of_name
+ probe_get_interesting_location
+ probe_gimple_interesting_location
+ probe_tree_interesting_location
+ probe_register_request_verb
+ send_command_to_probe
+ send_object_to_probe 
+ start_probe
+)
+;; eof xtramelt-probe.melt

@@ -1,0 +1,548 @@
+## a GNU Makefile for building the MELT plugin
+##
+##    Middle End Lisp Translator = MELT ; see http://gcc-melt.org/
+##
+##    Copyright (C) 2011 - 2013 Free Software Foundation, Inc.
+##    Contributed by Basile Starynkevitch <basile@starynkevitch.net> and others
+## 
+## This file contrib/MELT-Plugin-Makefile is part of GCC.
+## 
+## GCC is free software; you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation; either version 3, or (at your option)
+## any later version.
+## 
+## GCC is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+## 
+## You should have received a copy of the GNU General Public License
+## along with GCC; see the file COPYING3.   If not see
+## <http://www.gnu.org/licenses/>.
+
+### Notice that the MELT plugin should be rebuilt even for very minor
+### GCC changes, like a patchlevel upgrade, e.g. from GCC 4.7.2 to
+### 4.7.3
+
+$(info building MELT: see http://gcc-melt.org/ for more)
+
+## the command to remove files
+RM ?= rm -vf
+
+## for symbolic links
+LN_S ?= ln -s
+
+## we need bash to run melt-build-script.sh
+BASH ?= /bin/bash
+
+## the GCC compiler for C with which melt.so is used
+ifndef MELTGCC
+MELTGCC = $(or $(GCC),gcc)
+endif
+## the GCC compiler for C++ with which melt.so is used
+ifndef MELTGXX
+MELTGXX = $(or $(GXX),g++)
+endif
+
+
+### Our awk (GNU awk is prefered)
+AWK?= gawk
+
+## the version of our GCC getting melt.so, e.g. 4.7.0
+MELTGCC_VERSION := $(shell env LANG=C LC_ALL=C $(MELTGCC) -v < /dev/null 2>&1 | $(AWK) '/^gcc version/{print $$3}')
+$(info building MELT: GCC version $(MELTGCC_VERSION))
+
+## check that we have a gcc 4.7 or 4.8 or 4.9
+ifeq ($(filter 4.7.% 4.8.% 4.9.%, $(MELTGCC_VERSION)),)
+$(error building MELT: bad version of MELT GCC $(MELTGCC_VERSION). Needs GCC 4.7 or 4.8 or 4.9)
+endif
+## You may want to set MELTGCC_NO_CHECK_RUNTIME environment variable
+## when cross-compiling (since you cannot compile melt-runtime.cc with
+## a MELT augmented GCC in that case). See file melt-build-script.tpl
+## for more.
+
+## The compiler and flags used to build the melt.so plugin and to
+## compile MELT generated code.  Notice that melt-module.mk use the
+## same Make variables.  For a melt plugin to GCC 4.7 or later, that
+## should be a C++ compiler! eg
+##   make MELTGCC=gcc-4.7 GCCMELT_CXX=g++-4.7
+ifndef GCCMELT_CXX
+GCCMELT_CXX = $(or $(CXX),g++)
+$(info building MELT: GCCMELT_CXX= $(GCCMELT_CXX) is a C++ compiler)
+else
+$(info building MELT: GCCMELT_CXX= $(GCCMELT_CXX) is explicitly given $(origin GCCMELT_CXX))
+endif
+
+GCCMELT_CFLAGS ?= -g -O -Wall
+
+$(info building MELT: MELT plugin for MELTGCC= $(MELTGCC) to be compiled with GCCMELT_CXX= $(GCCMELT_CXX) flags $(GCCMELT_CFLAGS) $(if $(MELTGCC_BUILD_WITH_CXX),built with C++ $(MELTGCC_BUILD_WITH_CXX)))
+
+# Some versions of `touch' (such as the version on Solaris 2.8)
+# do not correctly set the timestamp due to buggy versions of `utime'
+# in the kernel.  So, we use `echo' instead.
+STAMP ?= echo timestamp >
+
+# Custom includes to lib needed to built melt.so
+# ie: -I/path/to/gmp/include
+MELTLIBS_INCLUDEFLAGS ?=
+
+## the gengtype for that GCC and its flag
+# some distributions want plugin/gengtype, others just gengtype
+MELTGCC_GENGTYPE := $(or $(wildcard $(shell $(MELTGCC) -print-prog-name=gengtype)),$(wildcard $(shell $(MELTGCC) -print-prog-name=plugin/gengtype)))
+
+MELTGCC_GENGTYPEFLAGS = -v
+
+## its state file
+MELTGCC_GTYPESTATE := $(or $(wildcard $(shell $(MELTGCC) -print-file-name=gtype.state)),$(wildcard $(shell  $(MELTGCC) -print-file-name=plugin/gtype.state)))
+
+## MELT plugin extra libraries and flags for melt.so
+MELTGCC_LIBES = 
+
+### the GNU sed utility
+SED?= sed
+
+### the GNU tr utility
+TR?= tr
+
+## the GNU autogen program
+AUTOGEN?=autogen
+
+## the GNU install utility from coreutils
+INSTALL?= install
+
+## The GNU texinfo makeinfo command
+MAKEINFO?= makeinfo
+
+## the GNU texi2pdf utility from makeinfo 
+TEXI2PDF?= texi2pdf
+
+## the GNU texi2html utility from makeinfo 
+TEXI2HTML?= texi2html
+
+## an install driver, which could be sudo or echo, or stay empty
+INSTALL_DRIVER?=
+
+## the destination directory, where to install, useful e.g., for MELT packagers
+DESTDIR?=
+
+INSTALL_DATA= $(INSTALL_DRIVER) $(INSTALL) -b -p -m 644
+INSTALL_PROGRAM= $(INSTALL_DRIVER) $(INSTALL) -b -p -m 755
+
+mkinstalldirs= $(INSTALL_DRIVER) mkdir -p
+## 
+## the existing GCC plugin directory
+MELTGCC_PLUGIN_DIR:= $(shell $(MELTGCC) -print-file-name=plugin)
+
+### distribution makers might want to override these....
+## the directory where *.info doc files are installed
+MELTGCC_DOC_INFO_DIR ?= /usr/share/info/gcc/
+## the directory where *.html doc files are installed
+MELTGCC_DOC_HTML_DIR ?=  /usr/share/doc/html/gcc/
+## the directory where *.pdf doc files are installed
+MELTGCC_DOC_PDF_DIR ?=  /usr/share/doc/pdf/gcc/
+
+## the main source of the runtime
+MELT_RUNTIME_CC= melt-runtime.cc
+MELT_RUNTIME_H= melt-runtime.h
+
+## get the MELT version string from melt-runtime.h, removing the
+## doublequotes
+melt_version_string:=$(shell $(AWK) -F\" '/^.define +MELT_VERSION_STRING/{print $$2}' $(MELT_RUNTIME_H))
+
+ifeq ($(wildcard $(MELTGCC_PLUGIN_DIR)/include/gimple*),)
+$(error building MELT: incorrect MELT GCC plugin directory $(MELTGCC_PLUGIN_DIR))
+endif
+
+ifeq ($(wildcard $(MELTGCC_GTYPESTATE)),)
+$(error building MELT: missing MELT GCC gengtype state file)
+endif
+
+## our included files from melt-runtime.cc
+MELTGCC_RUNTIME_INCLUDES= melt-runtime.h melt/generated/meltrunsup.h
+
+## the optimization flags for melt.so
+MELTGCC_OPTIMFLAGS= -O2
+
+## our include flags for melt.so and for MELT generated C code
+MELTGCC_INCLUDEFLAGS= -I $(melt_header_dir) -I $(MELTGCC_PLUGIN_DIR)/include -I $(MELTGCC_PLUGIN_DIR)/include/c-family $(MELTLIBS_INCLUDEFLAGS)
+
+## the make command started by make.so
+MELTGCC_MAKE= $(MAKE)
+
+.PHONY: all distclean clean doc doc-pdf doc-info doc-html install bootstrap-melt  install-melt-includes install-melt-sources install-melt-modules  install-melt-mk install-melt-default-modules-list install-melt-so
+
+# the GCC compiler into which we plug the MELT metaplugin
+melt_make_cc1= $(MELTGCC) -c
+# the make dependencies related to using MELT
+melt_make_cc1_dependency= melt-runtime.h melt-run.h melt/generated/meltrunsup.h melt/generated/meltrunsup-inc.cc melt.so
+melt_make_gencdeps= $(melt_make_cc1)
+melt_make_module_makefile= melt-module.mk
+
+# the directory containg *.melt files when making. Should be an absolute path
+melt_make_source_dir=$(realpath melt)
+# directory containing the MELT modules when making.
+melt_make_module_dir=$(realpath .)
+melt_move_if_change=$(realpath ./melt-mv-if-changed)
+## Don't use := definitions here!
+comma= ,
+melt_make_cc1flags= -fplugin=$(realpath melt.so) -I $(realpath .) -o /dev/null
+melt_cflags=  -I $(realpath .) -I $(realpath melt/generated)  -DIN_GCC -DMELT_IS_PLUGIN $(MELTGCC_INCLUDEFLAGS)
+export melt_cflags
+## extra cflags are for compiling applicative MELT files, e.g. xtramelt*.c
+melt_extra_cflags=
+export melt_extra_cflags
+melt_installed_cflags= $(MELTGCC_INCLUDEFLAGS) -DIN_GCC -DMELT_IS_PLUGIN -O
+melt_default_modules_list=melt-default-modules
+melt_default_probe=melt-probe
+
+## this is the installation directory of melt sources (*.melt files
+## in MELT dialect and the corresponding *.c files)
+melt_source_dir=$(MELTGCC_PLUGIN_DIR)/melt-sources/$(melt_version_string)
+
+
+## this is the installation directory of MELT header files
+melt_header_dir=$(MELTGCC_PLUGIN_DIR)/melt-headers/$(melt_version_string)
+
+## this is the installation directory of melt dynamic modules (*.so) and module list
+melt_module_dir=$(MELTGCC_PLUGIN_DIR)/melt-modules/$(melt_version_string)
+
+## this is the installed path of the MELT module makefile
+melt_installed_module_makefile=$(MELTGCC_PLUGIN_DIR)/melt-module-$(melt_version_string).mk
+
+## should be 1 
+melt_is_plugin=1
+
+# we force the stage0 to be "quicklybuilt" i.e. with constant field offsets.
+GCCMELT_STAGE_ZERO = meltbuild-stage0-quicklybuilt
+
+
+all: melt-run.h melt.so melt-translator melt-applications melt-gendoc doc
+	@echo 
+	@echo '+++++++++++++++++++'
+	@date +'*** MELT plugin "$(melt_version_string)" compilation completed at %c ***%n'
+	@echo 
+	@echo You may want to manually compile			\
+	       simplemelt-gtkmm-probe.cc if you have GTK '>= 3.4' and	\
+	       GTKmm.
+	@echo See its last dozen of lines for building	\
+	       instructions. 
+	@echo You could also use the Qt Python MELT \
+	       probe by Alexandre Lissy in the file simplemelt-pyqt4-probe.py \
+	       or from \
+	       git://git.mandriva.com/users/alissy/python-qt-melt-probe.git 
+	@echo
+	@echo you may want to install with e.g. \
+	  make install DESTDIR=/tmp/meltinstall \
+	  then copy your '$$DESTDIR' appropriately to the installation tree \
+          to fill $(MELTGCC_PLUGIN_DIR)
+	@echo
+	@echo Please subscribe to http://groups.google.com/group/gcc-melt forum.
+	@echo
+
+
+## notice that gengtype wants file named *.c not *.cc, hence the use
+## of _melt-runtime.c and _meltrunsup-inc.c which are symlinks!
+gt-melt-runtime.h:  $(MELTGCC_RUNTIME_INCLUDES) $(MELTGCC_GTYPESTATE) \
+   $(MELT_RUNTIME_CC) $(MELT_RUNTIME_H) _melt-runtime.c _meltrunsup-inc.c
+	$(MELTGCC_GENGTYPE) $(MELTGCC_GENGTYPEFLAGS) \
+	   -r  $(MELTGCC_GTYPESTATE) -P $@  $(MELTGCC_RUNTIME_INCLUDES) \
+	   _melt-runtime.c _meltrunsup-inc.c
+
+melt-predef.h:  make-melt-predefh.awk melt-predef.list
+	$(AWK) -f $^ > $@-tmp
+	mv $@-tmp $@
+
+.INTERMEDIATE: gfmeltgcc_version_number gfmeltgcc_revision gfmeltgcc_run_md5 \
+    _melt-runtime.c _meltrunsup-inc.c
+
+_melt-runtime.c: $(MELT_RUNTIME_CC)
+	$(LN_S) $^ $@
+
+
+_meltrunsup-inc.c: melt/generated/meltrunsup-inc.cc
+	$(LN_S) $^ $@
+
+melt-run.h melt-run-md5.h:
+
+# intermediate file for the version number
+gfmeltgcc_version_number: 
+	 echo "$(MELTGCC_VERSION)"  | $(AWK) '{split($$1,vertab,"."); printf "%d", vertab[1]*1000+vertab[2]}' > $@
+
+# intermediate file for the revision string
+gfmeltgcc_revision: GCCMELT-REVISION MELT-Plugin-Makefile 
+	$(SED) 's/^ *//' < $< | $(SED) 's/ *$$//'| $(SED) 's/ /_/g'  > $@-tmp
+	mv $@-tmp $@
+
+# intermediate file for the md5sum of preprocessed expansion of melt-run.proto.h
+gfmeltgcc_run_md5: $(MELTGCC_RUNTIME_INCLUDES) MELT-Plugin-Makefile  melt-run.proto.h \
+                   $(wildcard $(MELTGCC_PLUGIN_DIR)/include/*.h) melt-runtime.h  melt/generated/meltrunsup.h melt-predef.h
+	$(GCCMELT_CXX)  -C -E -DMELT_IS_PLUGIN -Imelt/generated -I. $(MELTGCC_INCLUDEFLAGS) melt-run.proto.h \
+	 | grep -v '^#' | md5sum | cut -c 1-32 > $@-tmp
+	mv $@-tmp $@
+
+melt-run.h: melt-run.proto.h gfmeltgcc_run_md5 gfmeltgcc_version_number
+	rm -f $@-tmp
+	$(SED) \
+            -e '/include.*melt-runtime.h/i #define MELT_IS_PLUGIN 1' \
+	    -e 's,#define *MELT_RUN_HASHMD5 *XX,#define MELT_RUN_HASHMD5 \"$(shell cat gfmeltgcc_run_md5)\",' \
+            -e 's,#define *MELT_GCC_VERSION *YY,#define MELT_GCC_VERSION $(shell cat gfmeltgcc_version_number),' <  $< > $@-tmp
+	mv $@-tmp $@
+
+melt-run-md5.h:  gfmeltgcc_run_md5
+	rm -f $@-tmp
+	(date +"/* $@ generated %c */"; \
+         echo const char melt_run_preprocessed_md5[] \
+         '=' \"$(shell cat gfmeltgcc_run_md5)\" ';') > $@-tmp
+	mv $@-tmp $@
+
+## the version number of our GCC getting melt.so, ie 4006 for 4.6 &
+## 4007 for 4.7
+MELTGCC_VERSION_NUMBER = $(shell cat gfmeltgcc_version_number)
+
+
+melt-runtime-params-inc.c: melt-make-string gfmeltgcc_revision
+	./melt-make-string \
+	     melt_source_dir '$(melt_source_dir)' \
+	     melt_header_dir '$(melt_header_dir)' \
+	     melt_module_dir '$(melt_module_dir)' \
+	     melt_module_make_command '$(MAKE)' \
+	     melt_module_makefile '$(melt_installed_module_makefile)' \
+	     melt_module_cflags '$(melt_installed_cflags)' \
+	     melt_revision '$(shell head -1 gfmeltgcc_revision)' \
+             melt_default_probe '$(melt_default_probe)' \
+	     melt_default_modlis '$(melt_default_modules_list)' > $@-tmp
+	mv $@-tmp $@
+
+melt-make-string: melt-make-string.c
+	$(GCCMELT_CXX) $^ -o $@
+melt-mv-if-changed: melt-mv-if-changed.c
+	$(GCCMELT_CXX) -O $^ -o $@
+
+melt.so melt-runtime.args: $(MELT_RUNTIME_CC) $(MELTGCC_RUNTIME_INCLUDES) \
+   melt-runtime-params-inc.c melt-mv-if-changed \
+   gt-melt-runtime.h $(wildcard $(MELTGCC_PLUGIN_DIR)/include/*.h) \
+   melt-predef.h melt-run.h melt-run-md5.h GCCMELT-REVISION \
+	gfmeltgcc_version_number gfmeltgcc_revision
+	@echo  $(melt_cflags) >  melt-runtime.args-tmp
+	@echo -DMELT_IS_PLUGIN \
+	   -DMELT_GCC_VERSION=$(MELTGCC_VERSION_NUMBER) \
+           '-DMELT_REVISION=\"$(shell cat gfmeltgcc_revision)\"' \
+	 >> melt-runtime.args-tmp
+	@echo $(MELTGCC_OPTIMFLAGS) >> melt-runtime.args-tmp
+	@echo -Wall $(MELT_RUNTIME_CC) >> melt-runtime.args-tmp
+	@mv melt-runtime.args-tmp melt-runtime.args
+	$(GCCMELT_CXX) $(GCCMELT_CFLAGS) -fPIC  -shared  @melt-runtime.args \
+	      -o $@ $(MELTGCC_LIBES)
+
+
+melt-build-param.sh:  Makefile melt-mv-if-changed melt.so
+	date "+#file $@ generated %c%n" > $@-tmp
+	echo '## compiler GCCMELT_COMPILER and flags GCCMELT_COMPILER_FLAGS to compile MELT generated code' >> $@-tmp
+	echo "GCCMELT_COMPILER='$(GCCMELT_CXX)'" >> $@-tmp
+	echo 'GCCMELT_COMPILER_FLAGS="$(filter-out -O% -g% -O -g, $(MELTGCC_INCLUDEFLAGS) -I $(realpath melt/generated) -I $(realpath .))"' >> $@-tmp
+	echo '## linker GCCMELT_LINKER and flags GCCMELT_LINKER_FLAGS to link MELT generated module' >> $@-tmp
+	echo "GCCMELT_LINKER='$(GCCMELT_CXX)'" >> $@-tmp
+	echo 'GCCMELT_LINKER_FLAGS="$(filter-out -O% -g% -O -g, $(LINKER_FLAGS))"' >> $@-tmp
+	echo '## source directory containing MELT code is GCCMELT_MELTSOURCEDIR' >> $@-tmp
+	echo GCCMELT_MELTSOURCEDIR=melt/ >> $@-tmp
+	echo '## preprocessor definitions of the MELT runtime is GCCMELT_RUNTIME_CCPPDEFS'  >> $@-tmp
+	printf "GCCMELT_RUNTIME_CCPPDEFS='%s'\n" '$(MELT_RUNTIME_CCPPDEFS)' >> $@-tmp
+	echo '## GCCMELT_VERSION_STRING is the string defining the version of MELT'   >> $@-tmp
+	echo 'GCCMELT_VERSION_STRING=$(shell $(AWK) -F\" '/^.define +MELT_VERSION_STRING/{print $$2}' melt-runtime.h)'  >> $@-tmp
+	echo '## GCCMELT_MAKE is the make utility' >> $@-tmp
+	+echo 'GCCMELT_MAKE="$(MAKE)"' >> $@-tmp
+	echo '## GCCMELT_CC1PLUS is the C++ compiler to use MELT for its bootstrapping' >> $@-tmp
+#we pass the melt.so plugin, and we need to pass -c to avoid any linking!
+	echo 'GCCMELT_CC1PLUS="$(MELTGXX) -fplugin=./melt.so -c"' >> $@-tmp
+	echo '## GCCMELT_CC1PLUS_PREFIX can be set to a prefix like "time" or "nice" to alter above' >> $@-tmp
+	$(if $(GCCMELT_CC1PLUS_PREFIX),echo GCCMELT_CC1PLUS_PREFIX='$(GCCMELT_CC1PLUS_PREFIX)' >> $@-tmp)
+	echo '## GCCMELT_CC1PLUS_DEPENDENCIES is the dependencies, including MELT runtime, for GCCMELT_CXX1' >> $@-tmp
+	echo 'GCCMELT_CC1PLUS_DEPENDENCIES="$(realpath $(MELTGCC) melt.so  $(MELT_H))"'  >> $@-tmp
+	echo '## GCCMELT_RUNTIME_DEPENDENCY is the dependency for the MELT runtime, eg. melt.so'  >> $@-tmp
+	echo 'GCCMELT_RUNTIME_DEPENDENCY="$(realpath ./melt.so)"' >> $@-tmp
+	echo '## GCCMELT_RUNTIME_ARGS is the argument file passed with @melt-runtime.arg to compile the MELT runtime'  >> $@-tmp
+	echo 'GCCMELT_RUNTIME_ARGS=$(realpath melt-runtime.args)' >> $@-tmp
+	echo '## GCCMELT_RUNTIME_CC is the C++ source file of the runtime' >> $@-tmp
+	echo 'GCCMELT_RUNTIME_CC="$(realpath $(MELT_RUNTIME_CC))"'   >> $@-tmp
+	echo '## GCCMELT_INCLUDES is the include flags for the MELT runtime' >> $@-tmp
+	echo 'GCCMELT_INCLUDES="-I $(realpath .) -I $(realpath melt/generated) $(INCLUDES)"'  >> $@-tmp
+	echo '## GCCMELT_MODULE_MK is the source location of the makefile melt-module.mk invoked by MELT'   >> $@-tmp
+	echo 'GCCMELT_MODULE_MK=$(realpath melt-module.mk)'  >> $@-tmp
+	echo '## GCCMELT_INSTALL_SOURCEDIR is the installed MELT source directory' >> $@-tmp
+	echo 'GCCMELT_INSTALL_SOURCEDIR=$(libexecsubdir)/melt-sources/$(melt_version_string)'  >> $@-tmp
+	echo '## GCCMELT_INSTALL_HEADERDIR is the installed MELT headers directory' >> $@-tmp
+	echo 'GCCMELT_INSTALL_HEADERDIR=$(plugin_includedir)/melt-headers/$(melt_version_string)'  >> $@-tmp
+	echo '## GCCMELT_INSTALL_MODULEDIR is the installed MELT module directory' >> $@-tmp
+	echo 'GCCMELT_INSTALL_MODULEDIR=$(libexecsubdir)/melt-modules/$(melt_version_string)'  >> $@-tmp
+	echo '## GCCMELT_INSTALL_MODULEMK is the installed MELT module makefile' >> $@-tmp
+	echo 'GCCMELT_INSTALL_MODULEMK=$(libexecsubdir)/melt-module-$(melt_version_string).mk'  >> $@-tmp
+	echo '## GCCMELT_IS_PLUGIN is 1 when melt.so is a plugin' >> $@-tmp
+	echo 'GCCMELT_IS_PLUGIN=1'   >> $@-tmp
+	echo '## GCCMELT_STAGE_ZERO is usually melt-stage0-dynamic, could be melt-stage0-quicklybuilt' >> $@-tmp
+	echo 'GCCMELT_STAGE_ZERO=$(subst melt-stage0,meltbuild-stage0,$(GCCMELT_STAGE_ZERO))'   >> $@-tmp
+	echo '## GCCMELT_DEFAULT_FLAVOR is the default flavor'
+	echo 'GCCMELT_DEFAULT_FLAVOR=optimized' >> $@-tmp
+	echo '## utility to move file if content changed GCCMELT_MOVE_IF_CHANGE' >> $@-tmp
+	echo 'GCCMELT_MOVE_IF_CHANGE=$(realpath melt-mv-if-changed)' >> $@-tmp
+	echo "#eof generated $@" >> $@-tmp
+	mv $@-tmp $@
+
+melt-build-script.sh: melt-build-script.def melt-build-script.tpl
+	$(AUTOGEN) melt-build-script.def
+
+## needed by melt-module.mk
+GCCMELTGEN_BUILD=melt-workdir/
+
+.PHONY: melt-clean melt-translator melt-applications melt-modlists melt-gendoc
+
+meltgendoc.texi:  melt-build-settings.sh  melt-build-param.sh melt-build-script.sh $(melt_make_cc1_dependency) $(MELTBUILD_MKFILE) warmelt-predef.melt melt-predef.h $(wildcard melt/*.melt melt/generated/*.[ch]) melt-gendoc
+
+melt-clean:
+	$(RM) -rf meltbuild*
+
+melt-translator: melt-build-settings.sh  melt-build-param.sh melt-build-script.sh $(melt_make_cc1_dependency) warmelt-predef.melt melt-predef.h $(wildcard melt/*.melt melt/generated/*.[ch])
+	@echo melt-translator script $(realpath melt-build-script.sh) MAKE= $(MAKE) MAKEFLAGS= $(MAKEFLAGS)
+	+env GCCMELT_MAKE="$(MAKE)" GCCMELT_MAKEFLAGS="$(MAKEFLAGS)" $(BASH) ./melt-build-script.sh translator
+
+
+melt-applications: melt-build-settings.sh  melt-build-param.sh melt-build-script.sh $(melt_make_cc1_dependency) $(MELTBUILD_MKFILE) warmelt-predef.melt melt-predef.h $(wildcard melt/*.melt melt/generated/*.[ch])
+	@echo melt-application script $(realpath melt-build-script.sh) MAKE= $(MAKE) MAKEFLAGS= $(MAKEFLAGS)
+	+env GCCMELT_MAKE="$(MAKE)" GCCMELT_MAKEFLAGS="$(MAKEFLAGS)" $(BASH) ./melt-build-script.sh applications
+
+
+melt-modlists: melt-build-settings.sh  melt-build-param.sh melt-build-script.sh $(melt_make_cc1_dependency) $(MELTBUILD_MKFILE) warmelt-predef.melt melt-predef.h $(wildcard melt/*.melt melt/generated/*.[ch])
+	@echo melt-modlists script $(realpath melt-build-script.sh) MAKE= $(MAKE) MAKEFLAGS= $(MAKEFLAGS)
+	+env GCCMELT_MAKE="$(MAKE)" GCCMELT_MAKEFLAGS="$(MAKEFLAGS)" $(BASH) ./melt-build-script.sh modlists
+
+
+melt-gendoc: melt-build-settings.sh  melt-build-param.sh melt-build-script.sh $(melt_make_cc1_dependency) $(MELTBUILD_MKFILE) warmelt-predef.melt melt-predef.h $(wildcard melt/*.melt melt/generated/*.[ch])
+	@echo melt-gendoc script $(realpath melt-build-script.sh) MAKE= $(MAKE) MAKEFLAGS= $(MAKEFLAGS)
+	@which "$(TEXI2HTML)" > /dev/null || (echo MELT bad TEXI2HTML: $(TEXI2HTML) ; exit 1)
+	@which "$(TEXI2PDF)" > /dev/null || (echo MELT bad TEXI2PDF: $(TEXI2PDF) ; exit 1)
+	+env GCCMELT_MAKE="$(MAKE)" GCCMELT_MAKEFLAGS="$(MAKEFLAGS)" $(BASH) ./melt-build-script.sh gendoc
+
+
+melt-build-settings.sh:   $(melt_make_cc1_dependency) Makefile melt.so | meltbuild-empty-file.c
+	env LANG=C LC_ALL=C $(MELTGCC) -fplugin=./melt.so -fplugin-arg-melt-print-settings=melt-build-settings.sh-tmp -c meltbuild-empty-file.c -o /dev/null
+	$(melt_move_if_change) melt-build-settings.sh-tmp $@
+
+meltbuild-empty-file.c:
+	date "+/* empty $@ generated %c */" > $@
+
+distclean: clean
+
+## melt-clean comes from melt-build.mk
+clean: melt-clean
+	$(RM) *.o melt.so *~ melt-predef.h gt-melt-runtime.h gfmelt* *tmp stamp-* *.args
+
+bootstrap-melt: melt.so warmelt-predef.melt warmelt0 warmelt1 warmelt2 warmelt all-melt
+
+warmelt-predef.melt: make-warmelt-predef.awk melt-predef.list
+	$(AWK) -f $^ > $@-tmp
+	mv $@-tmp $@
+
+################### documentation
+
+MELTDOCSRC= meltplugin.texi meltpluginapi.texi
+
+MELTDOCPDF= $(patsubst %.texi,%.pdf,$(MELTDOCSRC))
+MELTDOCINFO= $(patsubst %.texi,%.info,$(MELTDOCSRC))
+MELTDOCHTML= $(patsubst %.texi,%.html,$(MELTDOCSRC))
+
+%.html: %.texi
+	$(TEXI2HTML) $(TEXI2HTML_FLAGS) $< -o $@
+
+%.pdf: %.texi
+	$(TEXI2PDF) $(TEXI2PDF_FLAGS) $< -o $@
+
+doc: meltgendoc.texi meltplugin.texi meltpluginapi.texi doc-pdf doc-info doc-html
+
+doc-pdf: $(MELTDOCPDF)
+doc-info: $(MELTDOCINFO)
+doc-html: $(MELTDOCHTML)
+
+meltplugin.pdf: meltplugin.texi melt.texi
+meltplugin.html: meltplugin.texi melt.texi
+meltplugin.info: meltplugin.texi melt.texi
+
+meltpluginapi.pdf: meltpluginapi.texi meltgendoc.texi
+meltpluginapi.html: meltpluginapi.texi meltgendoc.texi
+meltpluginapi.info: meltpluginapi.texi meltgendoc.texi
+
+
+################# installation
+install:   all melt-gendoc \
+    install-melt-includes install-melt-sources install-melt-modules \
+    install-melt-mk install-melt-so install-melt-doc
+
+install-melt-includes: melt-runtime.h melt-predef.h melt-run.h melt-run-md5.h melt/generated/meltrunsup.h
+	@echo installing MELT include directory $(melt_header_dir)
+	$(mkinstalldirs) $(DESTDIR)$(melt_header_dir)
+	for f in $^; do \
+	   $(INSTALL_DATA) $$f $(DESTDIR)$(melt_header_dir) ; \
+	done
+
+install-melt-so: melt.so
+	$(INSTALL_PROGRAM) $< $(DESTDIR)$(MELTGCC_PLUGIN_DIR)/melt-$(melt_version_string).so
+	cd $(DESTDIR)$(MELTGCC_PLUGIN_DIR) ; $(LN_S) -f melt-$(melt_version_string).so melt.so
+
+
+
+### notice that meltbuild-sources is a directory filled by the all target
+### this also install the modules list files
+install-melt-sources: 
+	@echo installing MELT sources directory $(melt_source_dir)
+# we check that warmelt-normal.c exist in the build sources
+	@[ -f  meltbuild-sources/warmelt-normal.cc ] \
+	   || (echo incomplete meltbuild-sources missing warmelt-normal.cc ; exit 1)
+	$(mkinstalldirs) $(DESTDIR)$(melt_source_dir)
+	$(RM) meltbuild-sources/*~
+	for f in \
+	   meltbuild-sources/*.cc \
+           meltbuild-sources/*.c \
+           meltbuild-sources/*.h  \
+           meltbuild-sources/*.mk \
+           meltbuild-sources/*.melt \
+           meltbuild-sources/*.modlis \
+       ; do \
+	   $(INSTALL_DATA) $$f $(DESTDIR)$(melt_source_dir)/ ; \
+	done
+
+### notice that meltbuild-modules is  a directory filled by the all target
+install-melt-modules:
+	@echo installing MELT modules directory $(melt_module_dir)
+# we check that some xtramelt-ana-base module exist
+	@[ -f meltbuild-modules/xtramelt-ana-base.meltmod*.optimized.so ] \
+          || (echo incomplete meltbuild-modules missing xtramelt-ana-base optimized; exit 1)
+	$(mkinstalldirs) $(DESTDIR)$(melt_module_dir)
+	for l in  meltbuild-modules/[a-z]*.meltmod*.so ; do \
+	  $(INSTALL_PROGRAM) $$l $(DESTDIR)$(melt_module_dir)/ ; \
+	done
+
+
+## install the makefile for MELT modules
+install-melt-mk: melt-module.mk
+	@echo installing MELT maker into plugin dir $(MELTGCC_PLUGIN_DIR)
+	$(SED) -e 's:GCCMELT_HEADER_DIR=.:GCCMELT_HEADER_DIR=$(melt_header_dir):' < $< > melt-module.mk-tmp
+	$(mkinstalldirs) $(DESTDIR)$(MELTGCC_PLUGIN_DIR)
+	$(INSTALL_DATA) melt-module.mk-tmp $(DESTDIR)$(melt_installed_module_makefile)
+	$(RM) melt-module.mk-tmp
+
+
+### install the MELT documentation files
+install-melt-doc: doc doc-info doc-pdf doc-html
+	@echo installing MELT doc info directory $(MELTGCC_DOC_INFO_DIR)
+	$(mkinstalldirs) $(DESTDIR)$(MELTGCC_DOC_INFO_DIR)
+	$(INSTALL_DATA) *.info *.info-*[0-9] $(DESTDIR)$(MELTGCC_DOC_INFO_DIR)
+	@echo installing MELT doc html directory $(MELTGCC_DOC_HTML_DIR)
+	$(mkinstalldirs) $(DESTDIR)$(MELTGCC_DOC_HTML_DIR)
+	$(INSTALL_DATA) *.html $(DESTDIR)$(MELTGCC_DOC_HTML_DIR)
+	@echo installing MELT doc pdf directory $(MELTGCC_DOC_PDF_DIR)
+	$(mkinstalldirs) $(DESTDIR)$(MELTGCC_DOC_PDF_DIR)
+	$(INSTALL_DATA) *.pdf $(DESTDIR)$(MELTGCC_DOC_PDF_DIR)
+
+## fake test target to make Debian happy
+test:
+	true
+## eof MELT-Plugin-Makefile

@@ -1,0 +1,40 @@
+; -*- lisp -*-
+;; file tvariadic-1.melt
+
+#| run in buildir/gcc
+ ./cc1 -fmelt-mode=translatefile -fmelt-module-path=melt-stage3:.    -fmelt-source-path=melt-stage3:. \
+    -fmelt-tempdir=/tmp -fmelt-workdir=melt-workdir -fmelt-init=@warmelt \
+    -fmelt-arg=$GCCMELT_SOURCE/gcc/testsuite/melt/tvariadic-1.melt \
+    -fmelt-module-makefile=$GCCMELT_SOURCE/gcc/melt-module.mk \
+    -fmelt-debug empty-file-for-melt.c
+|#
+(defun varifun (f x :rest)
+  (let ( (:long sum 0) )
+    (forever 
+     parseargsloop
+     (variadic ( (:value nv)
+                (setq sum (+i sum (get_int nv)))
+                (again parseargsloop))
+               ( (:long n)
+                (setq sum (+i sum n))
+                (again parseargsloop))
+               ( ()
+               (exit parseargsloop))
+               ( :else
+                (assert_msg "INVALID argument")
+                (return))
+               ))
+    (debuglong "varifun sum" sum)
+    (f x sum))
+)
+
+(varifun 
+ (lambda (y :long s)
+   (let ( (t (tuple y (make_integerbox discr_integer s))) 
+          )
+     (debug_msg t "varifun gave t")
+     t))
+ 'a
+ '1 () 2 3)
+
+;; eof tvariadic.melt

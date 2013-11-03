@@ -1,0 +1,32 @@
+;; file tmakedoc.melt -*- lisp -*-
+
+#| run in buildir/gcc
+ ln -s $GCCMELT_SOURCE/gcc/testsuite/melt/tmakedoc.melt 
+
+ ## check once that this file is correct:
+ ./cc1plus -fmelt-mode=translatequickly @meltbuild-common.args \
+    -fmelt-init=@warmelt.quicklybuilt -fmelt-arg=tmakedoc.melt \
+     meltbuild-empty-file.c
+
+ ## generate documentation with it
+ ./cc1plus -fmelt-mode=makedoc y @meltbuild-common.args \
+    -fmelt-init=@warmelt.quicklybuilt -fmelt-arglist=tmakedoc.melt -fmelt-output=tmakedoc.texi \
+    -fmelt-debug meltbuild-empty-file.c
+|#
+
+
+(defclass class_foo 
+  :doc #{This is $CLASS_FOO. Why do we need $FOO_F1 and $FOO_F2 inside?}#
+  :super class_proped
+  :fields (foo_f1 foo_f2)
+  )
+
+(defun funa (x)
+  :doc #{This is the $FUNA function with $X}#
+  (or (get_field :foo_f1 x) x))
+
+(defprimitive primb (:long i) :long
+  :doc #{This is the $PRIMB primitive with $I.}#
+  #{/*PRIMB*/ 3*($I)}#)
+
+;; eof tmakedoc.melt

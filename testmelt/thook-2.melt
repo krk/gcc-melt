@@ -1,0 +1,38 @@
+; -*- lisp -*-
+;; file thook-2.melt
+
+#| run in buildir/gcc
+ ln -s $GCCMELT_SOURCE/gcc/testsuite/melt/thook-2.melt 
+ ./cc1 -fmelt-mode=rundebug  @meltbuild-common.args \
+    -fmelt-keep-temporary-files \
+    -fmelt-init=@warmelt.quicklybuilt \
+    -fmelt-arg=thook-2.melt \
+    -fmelt-debug meltbuild-empty-file.c
+|#
+
+(definstance override_xtra1_gate_delayed_queue class_delayed_queue
+  :named_name '"override_xtra1_gate_delayed_queue"
+  :delqu_first (make_list discr_list)
+  :delqu_last (make_list discr_list)
+)
+
+(defhook hook_xtra1_override_gate (:long beforegate) (:long aftergate) :void
+  :predef _ZXTRA1PREDEF
+  ;; fails to compile in svn rev 198815
+  (debug "hook_xtra1_override_gate beforegate=" beforegate 
+	 "\n override_xtra1_gate_delayed_queue=" override_xtra1_gate_delayed_queue
+	 "\n :true=" :true
+	 "\n qone=" '1
+	 "\n qstr=" '"string"
+	 "\n qif=" 'if)
+  (let ( 
+	(gateflag (if beforegate :true ()))
+	)
+    (if gateflag
+	(setq aftergate 1)
+      (setq aftergate 0))
+    )
+  )
+
+(debug "hook_xtra1_override_gate=" hook_xtra1_override_gate)
+;; eof thook-2.melt

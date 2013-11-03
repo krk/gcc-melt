@@ -1,0 +1,1079 @@
+Short installation instructions for MELT as a plugin to an installed
+gcc-4.7 or gcc-4.8 (or future gcc-4.9) enabled for plugins.
+
+See also http://gcc-melt.org/
+
+MELT is a plugin and domain specific language for extending GCC (the
+Gnu Compiler Collection), free software GPLv3+ licensed, FSF
+copyrighted. MELT is a lispy, high-level, language providing pattern
+matching and enabling functional/applicative/reflective programming
+styles, to ease development of GCC extensions.  MELT is translated to
+C code (and the MELT translator is implemented in MELT).
+
+If installing MELT as plugin to some existing gcc-4.7 installation
+tree, with the support of plugins enabled (or replace 4.7 by 4.8 if
+relevant):
+
+
+################ quick steps for Debian/Unstable or Ubuntu or derived distributions ####
+
+## Run as root (e.g. with sudo):
+  apt-get install gcc-4.7 g++-4.7 make texinfo texi2html autogen gawk
+  apt-get build-dep gcc-4.7
+  apt-get install libppl-dev libppl-c-dev gcc-4.7-plugin-dev 
+
+## then retrieve the MELT plugin release, and cd into it, then
+  make all
+  make install DESTDIR=/tmp/meltinstall
+
+## You might explicit the compiler you want to extend and to use:
+  make all CC=/usr/bin/gcc-4.7 CXX=/usr/bin/g++-4.7
+  make install CC=/usr/bin/gcc-4.7 CXX=/usr/bin/g++-4.7 DESTDIR=/tmp/meltinstall
+
+## The first "make all" needs 15 minutes, less than 1Gb disk, 4Gb RAM, and
+## *cannot be* a parallel "make -j all"
+
+## finally, as root copy the destination to install MELT
+  cp -v -p -R /tmp/meltinstall/. /.
+
+## Since MELT may generate and compile C code on the fly, you'll need its build
+## dependencies even to run it..
+
+## You need to rebuild & reinstall MELT even for minor GCC release
+##   upgrades (ie. from GCC 4.7.2 to 4.7.3).
+
+
+#########################################################################
+################################################################ DETAILS
+
+################ step 1
+
+First, ensure that 4.7 or 4.8 is correctly installed and has been built
+with plugins enabled, for example (on a Debian Unstable, package gcc-4.8):
+
+ % gcc-4.8 -v
+Using built-in specs.
+COLLECT_GCC=gcc
+COLLECT_LTO_WRAPPER=/usr/lib/gcc/x86_64-linux-gnu/4.8/lto-wrapper
+Target: x86_64-linux-gnu
+Configured with: ../src/configure -v --with-pkgversion='Debian 4.8.1-3' --with-bugurl=file:///usr/share/doc/gcc-4.8/README.Bugs --enable-languages=c,c++,java,go,d,fortran,objc,obj-c++ --prefix=/usr --program-suffix=-4.8 --enable-shared --enable-linker-build-id --libexecdir=/usr/lib --without-included-gettext --enable-threads=posix --with-gxx-include-dir=/usr/include/c++/4.8 --libdir=/usr/lib --enable-nls --with-sysroot=/ --enable-clocale=gnu --enable-libstdcxx-debug --enable-libstdcxx-time=yes --enable-gnu-unique-object --enable-plugin --with-system-zlib --disable-browser-plugin --enable-java-awt=gtk --enable-gtk-cairo --with-java-home=/usr/lib/jvm/java-1.5.0-gcj-4.8-amd64/jre --enable-java-home --with-jvm-root-dir=/usr/lib/jvm/java-1.5.0-gcj-4.8-amd64 --with-jvm-jar-dir=/usr/lib/jvm-exports/java-1.5.0-gcj-4.8-amd64 --with-arch-directory=amd64 --with-ecj-jar=/usr/share/java/eclipse-ecj.jar --enable-objc-gc --enable-multiarch --with-arch-32=i586 --with-abi=m64 --with-multilib-list=m32,m64,mx32 --with-tune=generic --enable-checking=release --build=x86_64-linux-gnu --host=x86_64-linux-gnu --target=x86_64-linux-gnu
+Thread model: posix
+gcc version 4.8.1 (Debian 4.8.1-3) 
+
+Be sure that you have all the development packages for all libraries
+used by GCC (e.g. run 'apt-get build-dep gcc' on Debian). In
+particular, you'll need the headers of CLOOG, PPL, MPC, MPFR, GMP
+libraries.
+
+Ensure that your system have recent autogen, GNU make, gawk (GNU awk), texinfo,
+texi2html utilities
+
+################ step 2
+
+Then, be sure that the GCC plugin development support has been
+installed. (On Debian, you'll need e.g. the gcc-4.8-plugin-dev package).
+
+So you should have something like
+% gcc-4.8 -print-file-name=plugin 
+/usr/lib/gcc/x86_64-linux-gnu/4.8/plugin
+
+Be sure that this plugin subdirectory is populated correctly since it
+contains an include directory and probably a gengtype executable (and
+perhaps more, e.g. your previous installation of MELT).
+
+% ls -l $(gcc-4.8 -print-file-name=plugin)
+-rwxr-xr-x 1 root     root      172160 Sep  5 00:01 gengtype
+-rw-r--r-- 1 root     root      554675 Sep  4 23:47 gtype.state
+drwxr-xr-x 9 root     root       20480 Sep 11 09:24 include
+
+
+Nota Bene: the gtype.state and gengtype files might perhaps be elsewhere.
+
+Be sure that this include subdirectory contains meaningful files for
+GCC, like those for GIMPLE
+% ls -l $(gcc-4.8 -print-file-name=plugin)/include/gimple.* 
+-rw-r--r-- 1 root root  14409 Sep  4 23:48 /usr/lib/gcc/x86_64-linux-gnu/4.8/plugin/include/gimple.def
+-rw-r--r-- 1 root root 134641 Sep  4 23:48 /usr/lib/gcc/x86_64-linux-gnu/4.8/plugin/include/gimple.h
+-rw-r--r-- 1 root root   1368 Sep  4 23:48 /usr/lib/gcc/x86_64-linux-gnu/4.8/plugin/include/gimple-pretty-print.h
+
+
+Be sure that the gengtype executable and its gtype.state textual data
+file is available somewhere. On Debian/Sid the package
+gcc-4.8-plugin-dev provides them
+
+If you have some previous MELT related files and directories it is
+preferable but not necessary to remove them. You might have two different
+releases of MELT for the same compiler but we don't recommend doing that.
+
+rm -rf $(gcc-4.8 -print-file-name=plugin)/*melt*
+
+
+Look with an editor, or just with the head command, that this gtype.state
+file is indeed the one related to your gcc-4.8:
+% head /usr/lib/gcc/x86_64-linux-gnu/4.8/plugin/gtype.state
+;;;;@@@@ GCC gengtype state
+;;; DON'T EDIT THIS FILE, since generated by GCC's gengtype
+;;; The format of this file is tied to a particular version of GCC.
+;;; Don't parse this file wihout knowing GCC gengtype internals.
+;;; This file should be parsed by the same gengtype which wrote it.
+
+(!version  "4.8.1")
+
+(!srcdir  "../../src/gcc")
+
+
+
+
+
+################ step 3
+
+Your plugin MELT directory should contain a Makefile which is a
+symlink to a MELT-Plugin-Makefile file. Please look into that file.
+(Most of the work is done in melt-build.mk, included from it).
+
+Use
+    make all
+to build the MELT plugin which takes some time (15 minutes), because MELT is
+retranslating itself. It cannot be a parallel make -j
+
+Use
+   make install DESTDIR=/tmp/meltinstall
+to install the MELT plugin. The usual DESTDIR behave as expected.
+As root, copy it appropriately:
+
+   cp -v -R -p /tmp/meltinstall/. /.
+
+Actually, only /usr is affected on many Linux distributions,
+so that could have been 
+
+   cp -v -R -p /tmp/meltinstall/usr/. /usr/.
+
+
+#### uninstallation
+
+Since all MELT related files are installed under 
+$(gcc-4.8 -print-file-name=plugin) you can just do as root
+   rm -v -r -f $(gcc-4.8 -print-file-name=plugin)/*melt*
+
+to uninstall MELT
+
+
+########## For packagers
+Notice that the MELT plugin should be entirely rebuilt
+even for small changes of the compiler (e.g. when upgrading gcc from
+4.8.1 to 4.8.2).
+
+
+
+################
+
+To prepare a source tree of the MELT plugin from the GCC MELT branch,
+run contrib/gcc_update then read and run
+contrib/make-melt-source-tar.sh from the GCC MELT branch. For
+instance, I am running it with something similar to
+
+   /usr/src/Lang/gcc-melt-branch/contrib/make-melt-source-tar.sh \
+       /usr/src/Lang/gcc-melt-branch \
+       /tmp/gcc-melt-plugin 
+
+If all goes well, you get a /tmp/gcc-melt-plugin.tgz gnuzipped tar
+archive for the MELT plugin. This is only needed to people making a
+new MELT plugin source archive.
+
+
+################ 
+
+Comments about the MELT plugin (including its installation script) are
+welcome by email to <basile@starynkevitch.net> [please mention MELT in
+the subject line] and to <gcc-melt@googlegroups.com>
+
+
+
+
+
+
+################################################################
+NEWS for 1.0 MELT plugin for GCC 4.7 & 4.8 [and future 4.9?]
+[[october 29th, 2013]]
+
+This is a major release (with perhaps some small incompatibilities
+with previous MELT plugin releases). A lot of new features are
+appearing. Much more ability to mix arbitrary C/C++ & MELT code in any
+way, and lots of new features both inside the MELT language and the
+MELT plugin, even for newbies. Some modes are now available and could
+be useful even without understanding much of the MELT domain specific
+language.
+
+MELT 1.0 is usable with GCC 4.7 and 4.8 but not usable with GCC 4.6 or
+earlier, because it requires a GCC compiler written in C++ and because
+it is generating C++ code.
+
+   End-user improvements
+   =====================
+
+ **** 
+ * Several MELT modes are usable without real knowledge of the MELT
+   domain specific language, notably -fplugin-arg-melt-mode=findgimple
+   (to find all gimples matching some given gimple pattern in all
+   functions whose declaration matches a given tree pattern) and
+   -fplugin-arg-melt-mode=justcountipa (to count gimples and basic
+   blocks at the Inter-Procedural Analysis stage).
+
+   Several examples of MELT modes are given in 
+   http://gcc-melt.org/tutousemelt.html
+
+   It is notably possible to 
+
+     + find all calls to malloc with a constant size greater than 100
+       that size could have been given thru sizeof and/or some
+       constant expressions...
+
+     + find all calls to printf with a format string containing the
+       word current and more than 6 arguments inside functions whose
+       name start with foo
+
+     + etc....
+ 
+
+   These exploring modes have to work inside the compiler. A textual
+   approach won't work. So these exploring modes should interest a
+   large number of GCC users.
+
+ ***
+ * When verbose, all the successful modes are displayed.
+
+   Language improvements
+   =====================
+
+ ***
+ * It is possible to define macros with defmacro (taking four
+  arguments: the s-expression to be macro-expanded, the environment,
+  the macro-expander function, the module context). Such macros can be
+  used in the same MELT module defining them, but should expand to a 
+  source AST which you would be able to read...
+
+ ***
+ * It is possible to define locally bound macros with the :macro annotation
+ in let bindings.
+
+ *** 
+ * at_macro_expansion macro can be used to define functions (and
+  instances, etc...) used only at macro-expansion time of further
+  defmacro-defined macros.
+
+ ***
+ * Macros defined by defmacro and definition given inside at_macro_expansion 
+ are evaluated in a separate environment so don't see the ordinary bindings 
+ currently defined in the MELT source.
+
+ ***
+ * The comma operator, only usefine inside anti-quotations (thru
+  backquote) is expanded to a sequence of sub-expressions if the
+  anti-quotation gives a sequence, i.e. a tuple or a list. So no
+  comma-at operator is needed.
+
+ ***
+ * quotes, anti-quotes (with backquote), and comma operators are
+ possible even on arbitrary s-expressions. But quotations and
+ antiquotations of s-exprs have their location slightly less precise
+ (only file name and line number, but not column number, are
+ preserved)
+
+   Runtime improvements
+   ====================
+
+  *** 
+  * The debug macro accepts debug manipulator which alters the way
+   the next argument is debug-printed, e.g. 
+       (DEBUG "here smaller debug of x=" DEBUG_LESS x)
+
+  ***
+  * The variadic ERROR_AT WARNING_AT and INFORM_AT functions are available
+  for diagnostics. They take a format string with occurrences of $1 ... $9 
+  expanded into variadic arguments. For example
+       (ERRROR_AT somelocation "this is an error with number $1 and tree $2"
+                  somenumber sometree)
+  The location can be null, or be given by some boxed gimple or boxed tree.
+
+  *** 
+  * The ASSERT_MSG macro can have more arguments, which are shown
+  when the assertion fails.
+
+  ***
+  * MELT registered passes have a unique number (for GCC 4.9).
+
+  ***
+  * The runtime is named melt-runtime.cc since it is C++ code. 
+
+  ***
+  * MELT generated frames are classy because they are C++ classes.
+
+ As usual, many bug fixes... A ticket system is now available on
+ https://sourceforge.net/p/gcc-melt/tickets/ for bug reports.
+
+################################################################
+NEWS for 0.9.9 MELT plugin for GCC 4.6 & 4.7 & 4.8
+[[june, 22nd, 2013]]
+
+This is a significant release. A lot of new features are
+appearing. Much more ability to mix arbitrary C/C++ & MELT code in any
+way and both directions!
+
+This is the last MELT release supporting GCC 4.6 and GCC compilers in
+C only. Future MELT releases with will be C++ only (i.e. emit C++
+code), for GCC 4.7 & 4.8
+
+   Language improvements
+   =====================
+
+   ***
+   * Code chunks can contain void side-effecting expressions of :VOID
+     ctype, translated to some C/C++ block. Hence code chunks can even
+     be indirectly nested. Within the macro-string, write $(...) for
+     the expression. You may want to make it a PROGN ending with
+     (VOID) to force it to be void.  Sub-expressions -of :VOID ctype-
+     inside code chunks are evaluated at the place of appearance, and
+     are expanded to C/C++ blocks at their occurrence.
+
+
+   ***
+   * Expression chunks are expanded into C/C++ expressions. Syntax is
+
+        (EXPR_CHUNK <state-symbol> <ctype> <macro-string> ...)
+
+   For instance, to get the pid of the cc1 running your MELT extension, use
+      (expr_chunk getpid_chk :long #{/*$GETPID_CHK*/ (long)getpid()}#)
+
+   Important notice: any sub-expression appearing in some EXPR_CHUNK
+   is evaluated before, like for primitives, so will always be
+   evaluated.
+
+
+   ***
+   * Ability to emit some C code in the implementation part. Syntax
+     (CIMPLEMENT <code-string>)
+
+   This is a companion to the existing CHEADER. Useful to declare some
+   specific non-inlined C++ function or static variable with CHEADER
+   and to define it with CIMPLEMENT.
+
+
+
+   ***
+   * New ability to add module "static" value variables in MELT
+   
+        (DEFVAR <varname>)
+   
+   The so defined variable <varname> is (in the generated C/C++ code)
+   a pointer [to some MELT value] inside a static array. Garbage
+   collection support is generated.  The variable <varname> cannot be
+   exported with EXPORT_VALUES, you need to export functions accessing
+   or changing it.  Once defined, you can use SETQ to assign to such a
+   module variable (and also DEFHOOK with :VAR)
+
+
+   ***
+   * New ability to define hooks, that is C/C++ functions coded in
+     MELT. Syntax is 
+
+        (DEFHOOK <hookname> <input-formals> <output-formals> <ctype> 
+                 [:var <module-variable>] <body...>)
+     
+    The optional <module-variable> given with a :var annotation should be 
+    a module variable previously defined with DEFVAR. 
+    For example, with the following code
+
+        (defvar varlist)
+        (setq varlist (list))
+        (defvar varhook)
+        (defhook appendnumhk (:long n) (:long outlen) :void 
+                 :var varhook
+            (list_append varlist (constant_box n))
+            (setq outlen (list_length varlist)))
+
+    you get two generated extern "C" functions in the emitted C/C++ code
+            void melthook_APPENDNUMHK (melt_ptr_t hook, long n, long* outlen);
+    and
+            void melthookproc_APPENDNUMHK (long n, long* outlen);
+
+    which you could use e.g. in some other code_chunk-s. The first
+    function melthook_APPENDNUMHK needs the hook value `appendnumhk' as
+    its first argument; the second function melthookproc_APPENDNUMHK
+    is generated because a :var annotation has been given, and uses
+    the hook value automagically stored in that `varhook' module
+    variable.
+    
+    Many functions previously coded in C/C++ inside the melt-runtime.c
+    have been migrated to predefined hooks coded in MELT inside
+    melt/warmelt-hooks.melt etc...
+
+    Hooks are a very important addition: with them you can mix C/C++ & MELT code 
+    at will.
+
+
+   ***
+   * New ability to call hooks,
+
+   Expresssions can also call known hooks given by their operator. But
+   the hook cannot be unknown: only applications can be done with
+   statically unknown operators.
+
+
+   ***
+   * EVAL function
+
+   An EVAL function has been added, it wraps the existing
+   TRANSLATE_RUN_MELT_EXPRESSIONS utility function so works by
+   generating C/C++ code then loading and running it.
+
+
+   Runtime improvements
+   ====================
+
+   *** 
+   * To register your MELT pass, use the INSTALL_MELT_PASS_IN_GCC
+   function instead of the obsolete INSTALL_MELT_GCC_PASS
+   primitive. Notice that INSTALL_MELT_PASS_IN_GCC is incompatible
+   with the older INSTALL_MELT_GCC_PASS, because you need to pass
+   the :after keyword instead of the "after" cstring, etc, etc...
+
+
+   ***
+   * Many plugin events are interfaced (using hook machinery). 
+   Some of them are incompatible with previous MELT releases.
+
+
+   ***
+   * Add macro melt_low_debug_value(Message,Value) to debug-print 
+   some arbitrary MELT value in C/C++ code or chunk. 
+   This goes thru a predefined hook, similar to the DEBUG macro of MELT.
+
+
+   *** 
+   * Add C variable melt_plugin_name containing the name of the MELT
+   plugin, useful for using register_callback.
+
+
+   *** 
+   * Raised default threshold for GC. The MELT full garbage
+   collector is less called.
+
+
+   ***
+   * Many bug fixes and internal improvements... Emitted C/C++ code 
+     contains more checks.. REPL and EVAL modes are working much better.
+
+
+   ***
+   * More primitives and functions
+   
+
+
+################################################################
+NEWS for 0.9.8 MELT plugin for GCC 4.6 & 4.7 & future 4.8
+[[december, 22th, 2012]]
+
+   Language improvements
+   =====================
+
+   * The LET syntax accepts bindings with the :auto ctype-annotation, like e.g.
+
+       (let ( (:auto four (+i 2 2)) )
+        (debug "four=" four))
+
+   the ctype is the obtained by the expression defining that binding 
+   i.e.   (+i 2 2) it the above example which is of ctype_long. 
+
+   The default ctype annotation -which used to be :value- is now :auto
+   this change is upward compatible but is very significant.
+
+   
+   * BOX-ing and CONSTANT_BOX-ing syntactic constructs
+
+   The (BOX <stuff>) syntax makes a mutable value boxing the given
+   stuff. So for example (BOX (+i 2 1)) is the same 
+   as (MAKE_INTEGERBOX DISCR_INTEGER (+i 2 1))
+
+   The (CONSTANT_BOX <stuff>) syntax makes a constant value boxing the 
+   given stuff. So for example (CONSTANT_BOX 1) is the same as
+   the expression (MAKE_INTEGERBOX DISCR_CONSTANT_INTEGER 1)
+
+   * UNBOX-ing syntactic construct
+   
+   The (UNBOX <ctype> <value>) is a convenient way to unbox values. For example
+   the expression (UNBOX :TREE V) is the same as (TREE_CONTENT V)
+
+
+   Runtime improvements
+   ====================
+
+   A new evalfile mode is available to evaluate expressions from a
+   file (default is standard input).
+
+   The evaluating modes are diplaying the last evaluated expression
+   using the debug depth parameter, which can be set with
+   -fplugin-arg-melt-debug-depth=10 program argument.
+
+   C-types have now autoboxing fields. Discriminants for constant
+   boxing of stuff have been added, notably
+   DISCR_CONSTANT_BASIC_BLOCK, DISCR_CONSTANT_EDGE,
+   DISCR_CONSTANT_GIMPLE, DISCR_CONSTANT_GIMPLE_SEQ,
+   DISCR_CONSTANT_LOOP, DISCR_CONSTANT_TREE
+
+   Vector from GCC 4.8 are now possible inside MELT.
+
+   A melt_intern_cstring function is available in C to intern
+   arbitrary null-terminated strings.
+
+   The melt-module.mk makefile is accepting the
+   GCCMELT_MODULE_VERBOSE_BUILD variable.
+
+   Several primitives have been added.
+
+   * Numerous bug fixes. 
+
+################################################################
+NEWS for 0.9.7 MELT plugin for GCC 4.6 & 4.7 & future 4.8
+[[october, 10th, 2012]]
+
+   Language improvement
+   ====================
+
+ When creating an instance with definstance or instance, the
+ translator checks that fields are filled with values. Previous
+ versions of MELT could crash in that case.
+
+ (CHEADER ...) constructs are working as documented.
+
+ The Parma Polyhedra Library is removed from MELT.
+
+ String values know their length, so safe access to some byte inside
+ is possible.
+
+   Added a lot of cmatchers (and implicit primitives) like
+	tree_boolean_false_node, tree_boolean_true_node,
+	tree_boolean_type_node, tree_char_type_node,
+	tree_const_ptr_type_node, tree_double_type_node,
+	tree_float_type_node, tree_int128_integer_type_node,
+	tree_int128_unsigned_type_node, tree_integer_minus_one_node,
+	tree_integer_one_node, tree_integer_type_node,
+	tree_integer_zero_node, tree_long_double_type_node,
+	tree_long_integer_type_node, tree_long_long_integer_type_node,
+	tree_long_long_unsigned_type_node,
+	tree_long_unsigned_type_node, tree_null_pointer_node,
+	tree_ptr_type_node, tree_short_integer_type_node,
+	tree_short_unsigned_type_node, tree_signed_char_type_node,
+	tree_size_type_node, tree_unsigned_char_type_node,
+	tree_unsigned_type_node, tree_void_type_node
+   to access the very built-in trees known to GCC.
+   Added more tree & gimple related matchers and primitives.
+
+ Less spurious warnings when building MELT.
+
+
+   Runtime improvements
+   ====================
+
+  Add a runtime expression evaluation function
+  TRANSLATE_RUN_MELT_EXPRESSIONS with a mode eval for initial
+  evaluation of a sequence of expressions, and a mode repl for
+  read-eval-print-loop, and a mode eval for evaluating and printing a
+  given expression. Try e.g. 
+     gcc -c -fplugin=melt  -fplugin-arg-melt-mode=eval \
+        -fplugin-arg-melt-arg='(list discr_tree class_sexpr)' \
+        empty.c
+
+
+  Advanced users could register their own finalized client data using
+  the melt_payload_register_descriptor C function.
+
+  The building procedure has been revamped. Advanced users could
+  define their GCCMELT_BUILD_NOTIFICATION environment variable to
+  e.g. a script meltbuild-notification like
+
+      #! /bin/bash
+      # first arg title, second arg message
+      if [ "$DISPLAY" = ":0.0" -a -n "$DESKTOP_SESSION" -a $(which notify-send) ]; then
+         notify-send -t 3500 -i info "MELT BUILD: $1" "$2"
+      else
+         logger -t meltbuild -p user.info "$1=" "$2"
+      fi
+
+  and they will have a nice bubble notification under most Linux
+  desktops of the major steps of the build. The building procedure is
+  now quicker than before.
+
+  Advanved MELT users can set their MELTGCC_NO_CHECK_RUNTIME to
+  disable checking of the MELT runtime. This is notably needed when
+  the MELT plugin is compiled for a cross compiler.
+
+  Advanced MELT users willing to debug with gdb could set the
+  melt_alptr_1 and melt_objhash_1 in their gdb debugger to track
+  allocation or changes of MELT values or objects.
+
+  The -fmelt-debugging=all option works as expected in the MELT branch
+  and so does -fplugin-arg-melt-debugging=all in the MELT plugin.
+
+
+Numerous bug fixes. The probe has been improved, and also shows some
+Gimple/SSA. Consider using Alexandre Lissy's replacement (Python/Qt
+based) of the probe.
+
+
+
+
+
+ ################################################################
+ NEWS for 0.9.6 MELT plugin for GCC 4.6 & 4.7 [[july, 31st 2012]]
+
+   Language improvements
+   =====================
+
+   Syntax: (USE-PACKAGE-FROM-PKG-CONFIG <packagename>)
+
+   On systems, such as most Linux distributions, with the pkg-config
+   utility http://en.wikipedia.org/wiki/Pkg-config
+   http://pkg-config.freedesktop.org/ the given packagename is used
+   when compiline the generated C code and when linking the generated
+   shared module.
+
+   Emited C code by MELT is more conformant to C++ and C coding standards.
+
+   More primitives, macros, ... notably WHEN & UNLESS, like in Common Lisp...
+
+   The CLASS_CONTAINER has been renamed as CLASS_REFERENCE. Likewise
+   SET_CONTENT is renamed as SET_REFERENCE...
+
+
+   Runtime improvements
+   ====================
+
+   When a function is called in an occurrence expecting secondary
+   results and does not return secondary results, a warning is
+   emitted.
+
+   MELT may emit symlinks to "unique" C files in the workdir, helpful
+   when regenerating an already generated file...
+
+   "Interrupts" have been inproperly named, speak of "signals" (in the
+   Posix/Unix sense, not the Gtk/Qt one!).
+
+   The build of the MELT runtime and of the MELT modules is done by an
+   autogen-erated shell script melt-build-script.sh generated from
+   melt-build-script.tpl & melt-build-script.def. It should be more
+   robust, and avoid doing useless things, so is faster when you
+   rebuild again MELT.
+
+   Add support for timers & child processes...
+
+   Debugging run works well with plugin using
+   -fplugin-arg-melt-debugging=all (or =mode).
+
+   Library improvment
+   ==================
+
+   The probe mode is able to to start and communicate an external
+   graphical probe.
+
+   A simple probe, coded in C++ for GTKmm3.4, is available as a self
+   contained program simplemelt-gtkmm-probe.cc; its compilation
+   command is given at the very end of that source file, e.g.:
+
+        g++ -std=gnu++0x -Wall -O -g \
+          $(pkg-config --cflags --libs gtksourceviewmm-3.0  gtkmm-3.0  gtk+-3.0) \
+        -o $HOME/bin/simplemelt-gtkmm-probe simplemelt-gtkmm-probe.cc
+
+   The probe code in simplemelt-gtkmm-probe.cc is still buggy. 
+   Sometimes, the probe windows freeze and you have to kill the process.
+
+   You could have the following shell script, named melt-probe
+                     
+     #! /bin/bash -x
+     # the -T argument to the probe display the trace window 
+     # showing the exchanges between probe and MELT
+     exec simplemelt-gtkmm-probe -T $*
+
+   The probe mode is expecting a shell script or program named
+   melt-probe somewhere in your path.
+
+   You can now compile some C or C++ ... file with GCC enhanced by MELT, e.g.
+     gcc -fplugin=melt -fplugin-arg-melt-mode=probe -c some-file.cc
+
+   A graphical window appears, to display your source code
+   some-file.cc (and others, e.g. included files). Click on the
+   buttons inside it to show the corresponding GCC internals at the
+   corresponding source location.
+
+   Ability to walk on gimple sequences using GCC infrastructure thru
+   walk_gimple_seq & walk_gimple_seq_unique_tree primitives.
+
+   Much more interfaces to Gimple & Trees...
+
+   The PPL (Parma Polyhedra Library) MELT binding is obsolete and will
+be soon removed (see http://bugseng.com/products/ppl/ for more about
+PPL, which is used in GCC-4.6 & GCC-4.7 for Graphite & Cloog, but won't
+be used in GCC 4.8). Hence, avoid e.g. having values of
+DISCR_PPL_CONSTRAINT_SYSTEM or using primitives or stuff of c-types
+like :ppl_coefficient etc...
+
+################################################################ NEWS
+for 0.9.5 MELT plugin for GCC 4.6 & 4.7 [[April 12th 2012]]
+
+   Language improvements
+   =====================
+
+   Alternative infix syntax is abandoned (it was never implemented)
+
+   Accept $(sub sepxr) in macro-string and $[seq sepxr]
+
+   Runtime improvements
+   ====================
+
+   Handle SIGIO Unix signals with asynchronous input channels
+   (experimental feature)
+
+   Can be compiled by C++ (since GCC 4.7 often is)
+
+   All the values are translated to melt_ptr_t variables, not void*
+   ones.
+
+   Library improvment
+   ==================
+
+   Much more matchers, and much more generated documentation, to interface to
+   GCC internal stuff in xtramelt-ana-base.melt
+   
+
+#######################################################################
+NEWS for 0.9.4.b MELT plugin for GCC 4.6 (and 4.7 when available)
+released on March 04th, 2012
+
+   Language improvements
+   =====================
+
+Add CHEADER macro to insert header c-code. For example
+
+   (cheader #{#include <readline/readline.h>}#)
+or 
+   (cheader #{inline int succ(int x) { return x+1;}}#)
+
+[you still need dirty tricks to link an external library into a MELT
+module; as a temporary workaround, consider editing melt-module.mk for
+them, perhaps defining GCCMELT_MODULE_EXTRALIBES there, or link
+manually the library into melt.so meta-plugin]
+
+   Runtime 
+   =======
+
+Hash maps have an auxiliary data value, which can be accessed and set
+at will. 
+
+   Translator
+   ==========
+
+All C-generating devices (primitives, c-iterators, ...) emit their
+code in a syntax checking C function, which is never called, but is
+emitted to ensure the emittable C code is syntactically correct. This
+catch typos in (defprimitive ...) etc... even for e.g. yet unused
+primitives.
+
+   Bugs 
+   ====
+
+Many bugs have been corrected.
+
+[Notably, the 0.9.4 release of march 02nd 2012, -not this 0.9.4.b-
+didn't generate documentation correctly]
+
+
+#######################################################################
+NEWS for 0.9.3 MELT plugin for gcc-4.6 (and future gcc-4.7)
+January 27th, 2012
+
+New features:
+
+    Language improvements
+    =====================
+
+Ability to define a named value with the (DEFINE <name> <expr>) construct
+
+   More support notably for Gimple & Tree
+   ======================================
+Added more cmatchers etc.
+
+   Runtime improvement
+   ===================
+
+Generation of timestamping C file foo+melttime.h included from
+generated descriptor file foo+meltdesc.c from foo.melt 
+
+#######################################################################
+NEWS for 0.9.2.b MELT plugin for gcc-4.6 (and future gcc-4.7)
+
+December 08th, 2011: Release of MELT plugin 0.9.2 for gcc-4.6 (& future gcc-4.7)
+	dedicated to the memory of John McCarthy
+        http://en.wikipedia.org/wiki/John_McCarthy_(computer_scientist)
+
+Several bug fixes.
+
+New features:
+
+    cloning of values
+    =================
+
+The CLONE_WITH_DISCRIMINANT primitive -whose implementation is mostly
+generated- enables creating new values, nearly clones of old
+ones. Usage is
+
+    (clone_with_discriminant <old-value> <new-discriminant>)
+
+If the new discriminant is compatible with the old value's
+discriminant, a new value is allocated. If it is not compatible nor
+not a discriminant, the old value is returned. In particular, it is
+possible to use 
+   (clone_with_discriminant (lambda ....) discr_debug_closure) 
+to make a debugging closure.
+
+   debugging closures 
+   ==================
+
+The DEBUG macro (and the underlying MELT_DEBUG_FUN which you should
+not use directly) handles closure with the DISCR_DEBUG_CLOSURE
+discriminant specially (somehow like C++ manipulators for
+ostream-s). If an argument is a debugging closure of exactly the
+DISCR_DEBUG_CLOSURE discriminant, the next argument is displayed using
+that debugging closure.
+
+   Walking SSA use-def chains
+   ==========================
+
+The primitives WALK_USE_DEF_CHAIN_BREADTH_FIRST &
+WALK_USE_DEF_CHAIN_DEPTH_FIRST enables to walk thru the use-def chains
+in SSA passes.
+
+   More support notably for Gimple & Tree
+   ======================================
+
+Several functions, cmatchers, primitives have been defined, notably
+GIMPLE_ASSIGN_TO, WALK_USE_DEF_CHAIN_BREADTH_FIRST &
+WALK_USE_DEF_CHAIN_DEPTH_FIRST, EACHGIMPLEPHI_IN_BASICBLOCK
+
+
+  New MELT hooks for PLUGIN_FINISH_TYPE & PLUGIN_FINISH_DECL
+  ==========================================================
+
+MELT functions can be registered using
+REGISTER_FINISH_TYPE_HOOK_FIRST, REGISTER_FINISH_TYPE_HOOK_LAST,
+REGISTER_FINISH_DECL_HOOK_FIRST, REGISTER_FINISH_DECL_HOOK_LAST. The
+argument is a boxed tree value. The PLUGIN_FINISH_DECL don't exist in
+GCC 4.6 (only in GCC 4.7 and later).
+
+  New MELT hooks for other events
+  ===============================
+ 
+MELT functions can be register for PLUGIN_ALL_PASSES_START,
+     PLUGIN_ALL_PASSES_END, PLUGIN_ALL_IPA_PASSES_START,
+     PLUGIN_ALL_IPA_PASSES_END, PLUGIN_EARLY_GIMPLE_PASSES_START,
+     PLUGIN_EARLY_GIMPLE_PASSES_END event using
+ REGISTER_ALL_IPA_PASSES_END_HOOK_FIRST
+ REGISTER_ALL_IPA_PASSES_END_HOOK_LAST
+ REGISTER_ALL_IPA_PASSES_START_HOOK_FIRST
+ REGISTER_ALL_IPA_PASSES_START_HOOK_LAST
+ REGISTER_ALL_PASSES_END_HOOK_FIRST
+ REGISTER_ALL_PASSES_END_HOOK_LAST
+ REGISTER_ALL_PASSES_START_HOOK_FIRST
+ REGISTER_ALL_PASSES_START_HOOK_LAST
+ REGISTER_EARLY_GIMPLE_PASSES_END_HOOK_FIRST
+ REGISTER_EARLY_GIMPLE_PASSES_END_HOOK_LAST
+ REGISTER_EARLY_GIMPLE_PASSES_START_HOOK_FIRST
+ REGISTER_EARLY_GIMPLE_PASSES_START_HOOK_LAST
+
+
+  More runtime code generated
+  ===========================
+More runtime code is generated internally.
+
+  Additional translating MELT modes
+  =================================
+
+The translatetomodule mode produces all three flavors (.quicklybuilt.so, .debugnoline.so, .optimized.so) of modules
+
+The translateoptimized mode produces .optimized.so flavor of modules
+
+#######################################################################
+NEWS for 0.9.1 MELT plugin for gcc-4.6
+
+October 24, 2011: Release of MELT plugin 0.9.1 for gcc-4.6
+	dedicated to the memory of Dennis M. Ritchie
+	http://en.wikipedia.org/wiki/Dennis_Ritchie
+
+New features:
+
+    variadic MELT functions. 
+    =======================
+A formal arguments list (i.e. formals for LAMBDA or DEFUN) ending with
+:REST is for variadic functions with a variable number and type of
+arguments (so :REST in MELT is similar to the ellipsis ... notation in
+C prototypes).  At least one first formal argument should be provided
+and should be a value.
+
+The (VARIADIC ....) macro is used to fetch actual variadic
+arguments. A variadic cursor is internally maintained to parse the
+variadic actual arguments. The VARIADIC macro has a sequence of
+variadic cases. Each variadic case starts with an ordinary
+[non-variadic] formal arguments list, and has a body which is
+evaluated for side effects if the current arguments at the cursor
+position fits into the formal. The last variadic case can also starts
+with an :ELSE.  See also
+http://groups.google.com/group/gcc-melt/browse_thread/thread/c124ea6af940c08e
+
+    variadic (DEBUG ....) macro.
+    ============================
+
+Debugging messages should go thru the variadic (DEBUG ...) macro which
+accepts an arbitrary kind and number of arguments. The DEBUG_MSG macro
+is obsolete.
+
+   variadic ADD2OUT function
+   =========================
+
+The ADD2OUT variadic function add to an output (either a file value;
+or a string buffer values) arbitrary things.
+
+#######################################################################
+NEWS for 0.9 MELT plugin for gcc-4.6
+
+September 27th, 2011: Release of MELT plugin 0.9 for gcc-4.6
+
+New features:
+
+    Documentation is generated
+
+    The PLUGIN_PRE_GENERICIZE event is interfaced.
+
+    The build machinery and the binary module loading has been
+    significantly updated.  Modules shared objects are like
+    warmelt-macro.3461497d8ef7239dc1f2f132623e6dd5.quicklybuilt.so and
+    they contain the md5sum of the catenation of all C files. They
+    also come in various flavor: quicklybuilt (the generated C is
+    compiled with -O0 -DMELT_HAVE_DEBUG), optimized (the generated C
+    is compiled with -01 and without -DMELT_HAVE_DEBUG), debugnoline
+    (the generated C is compiled with -g and -DMELT_HAVE_DEBUG but no
+    #line directives).
+
+    Conceptually, a module is loaded by loading its +meltdesc.c
+    file. That file (e.g. warmelt-macro+meltdesc.c corresponding to
+    warmelt-macro.melt) should never be moved or even edited.  It is
+    parsed at module load time, and contains the various md5sum of
+    real generated C files.
+
+    New option -fplugin-arg-melt-workdir= for the work directory,
+    where every .c or .so files are generated.
+
+    The DISCR_BOX discriminant has been removed. Use containers instead.
+
+    Containers, that is instances of class_container having one single field 
+    :container_value, are supported by syntactic macros and sugar & function.
+       (container V)   
+          =equivalent=   (instance class_container :container_value V)
+       (content C)
+          =equivalent=   (get_field :container_value C)
+       (set_content C V)
+          =equivalent=   (put_fields C :container_value V)
+    You can write exclaim instead of content, and there is a new syntactic 
+    sugar
+       !X
+
+     is the same as (content X) - the exclamation mark should be
+     followed by spaces, letters, or left parenthesis to be parsed as
+     exclaim -that is as the content macro above.
+
+    In patterns, ?(container ?v) means 
+    ?(instance class_container :container_value ?v)
+
+    Fields can be accessed by their name, so
+      (:F C)
+   is the same as (get_field :F C)
+   Hence (:container_value foo) is the same as !foo or 
+   (get_field :container_value foo)
+
+   Experimental syntactic sugar: inside an s-expr, a macro string
+   written ##{...}# is expanded as several components, not a single
+   list.
+
+   Experimental: ability to (define ...) values like in Scheme.
+
+   Ability to create gimple-s and to modify gimple_seq.
+
+   Slow boxed arithmetic operations are available (e.g. +iv gets two
+   boxed integer and gives the boxed integer of their sum).
+
+Many bug fixes.
+
+The build system has been revamped. The generated .c files should be
+available when running MELT.
+
+
+Thanks to Pierre Vittet, Alexandre Lissy, Romain Geissler for
+feedback, patches, suggestions.
+
+#######################################################################
+NEWS for 0.8 MELT plugin for gcc-4.6
+
+July 11th, 2011: Release of MELT plugin 0.8 for GCC 4.6
+as melt-0.8-plugin-for-gcc-4.6 on http://gcc-melt.org/
+
+
+New features:
+ * support for pragmas for MELT
+
+ * the MELT garbage collector is called less often, using the
+   PLUGIN_GGC_START hook.
+
+ * several new c-iterators and c-matchers.
+
+ * added static analyzing pass gccframe, useful for melt-runtime.c
+
+ * reject nested defun-s, you should use letrec or let...
+
+ * the MELT plugin is built with its MELT-Plugin-Makefile
+
+ * debug_msg, assert_msg ... should work, thanks to MELT_HAVE_DEBUG
+   preprocessor flag, even when melt.so is a plugin for a GCC without
+   checks enabled.
+
+ * melt-runtime.h has a melt_gcc_version integer variable and
+   melt-runtime.c should be given MELT_GCC_VERSION preprocessor
+   constant.
+
+ * runfile mode compiles quickly (with debug_msg support). Add new mode
+   translatequickly to compile quickly (with debug_msg & assert_msg
+   support).
+
+ * the MELT building procedure builds various variants of MELT modules,
+
+   The 'optimized' variant is built with -O2 but don't support
+   (debug_msg ...)  or (assert_msg ...). The 'quicklybuilt' variant is
+   built with -O0 and supports debug_msg & assert_msg.  The
+   'debugnoline' variant is mostly useful with gdb, and also supports
+   debug_msg & assert_msg. These variants should be interoperable, you
+   could have a warmelt* module with 'optimized' variant and an
+   xtramelt* module in 'quicklybuilt' bariant.
+
+Many bugfixes
+  (but some bugs remain)
+
+Thanks to Pierre Vittet for code contributions (notably thru Google
+Summer of Code), Alexandre Lissy and Allan McRae for bug reports.
+
+#######################################################################
+NEWS for 0.7 MELT plugin for gcc-4.6
+
+April 29th, 2011: first release, melt-0.7-plugin-for-gcc-4.6
+
+################################################################
+(MELT development is partly funded thru OpenGPU [FUI call] & GlobalGCC
+[ITEA call] projects by French DGCIS).
+
+
+################################################################

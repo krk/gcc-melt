@@ -1,0 +1,17 @@
+;; -*- lisp -*-
+;; file tcontent.melt
+#| run in buildir/gcc with 
+   ln -s $GCCMELT_SOURCE/gcc/testsuite/melt/tcontent.melt
+  ./cc1 -fmelt-mode=translatefile  -fmelt-module-path=melt-stage3:.    -fmelt-source-path=melt-stage3:. \
+    -fmelt-tempdir=/tmp -fmelt-init=@warmelt \
+    -fmelt-arg=tcontent.melt \
+    -fmelt-debug empty-file-for-melt.c
+|#
+(defun fcontent (x) 
+       (content x))
+
+(defun fcontainer (y)
+       (container y))
+
+(defun fexclam (z)
+       !z)

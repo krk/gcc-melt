@@ -1,0 +1,35 @@
+; -*- lisp -*-
+;; file tmacro-1.melt
+
+#| run in buildir/gcc
+ ln -sv $GCCMELT_SOURCE/gcc/testsuite/melt/tmacro-1.melt
+ ./cc1 -fmelt-mode=rundebug @meltbuild-common.args \
+    -fmelt-keep-temporary-files \
+    -fmelt-init=@warmelt.quicklybuilt \
+    -fmelt-arg=tmacro-1.melt \
+    -fmelt-debug meltbuild-empty-file.c
+|#
+
+(defmacro bitup (sexp env mexpander modctx)
+  (debug "macro bitup sexp=" sexp)
+  ;; sexp is the entire (bitup ...) s-expression
+  (let ( 
+	(sloc (get_field :loca_location sexp))
+	(scont (get_field :sexp_contents sexp))
+	(arg1 (list_nth_element scont 1))
+	(newsexp (make_sexpr sloc 'tuple arg1 arg1))
+	)
+    (if (!=i (list_length scont) 2)
+	(error_plain sloc "BITUP wants one argument"))
+    (debug "macro bitup newsexp=" newsexp)
+    (let ( (res (mexpander newsexp env mexpander modctx))
+	   )
+      (debug "macro bitup res=" res)
+      (return res))))
+
+;; insane (debug "here bitup=" bitup)
+
+(debug "using bitup" (bitup 'a))
+
+;; eof tmacro-1.melt
+

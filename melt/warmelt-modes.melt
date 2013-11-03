@@ -1,0 +1,4744 @@
+;; file warmelt-modes.melt -*- Lisp -*-
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(comment "***
+    Copyright (C) 2011 - 2013 Free Software Foundation, Inc.
+    Contributed by Basile Starynkevitch <basile@starynkevitch.net>
+
+    This file is part of GCC.
+
+    GCC is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 3, or (at your option)
+    any later version.
+
+    GCC is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with GCC; see the file COPYING3.  If not see
+    <http://www.gnu.org/licenses/>.
+***")
+
+;; the copyright notice above apply both to warmelt-modes.melt and 
+;; to the generated files  warmelt-modes*.cc
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;    This file is part of a bootstrapping compiler for the MELT lisp
+;;    dialect, compiler which should be able to compile itself (into
+;;    generated C file[s])
+;;    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+(defun install_melt_mode (mode)
+  :doc #{$INSTALL_MELT_MODE installs a new MELT mode, ie an instance of $CLASS_MELT_MODE.}#
+  (assert_msg "check mode" (is_a mode class_melt_mode) mode)
+  (let ( (cmdict (get_field :sysdata_mode_dict initial_system_data))
+	 (cnam (get_field :named_name mode))
+	 )
+    (if (mapstring_getstr cmdict cnam)
+	(warningmsg_strv "installing an existing mode" cnam))
+    (debug "install_melt_mode mode=" mode)
+    (mapstring_putstr cmdict cnam mode)
+))
+
+(export_values install_melt_mode)
+
+;;;;;;;;;;;;;;;;
+;;;;;
+(defun runfile_docmd (cmd moduldata)
+  (debug "start runfile_docmd cmd=" cmd " moduldata=" moduldata)
+  (let ( 
+	(parmodenv (parent_module_environment))
+	(curenv (if moduldata moduldata initial_environment))
+	(inarg (make_stringconst discr_string (melt_argument "arg")))
+	(outarg (make_stringconst discr_string (melt_argument "output")))
+	)
+    (debug "runfile_docmd before read runfile_mode parmodenv=" parmodenv 
+	   " initial_environment=" initial_environment
+	   " inarg=" inarg
+	   " outarg=" outarg)
+    (assert_msg "check curenv" (is_a curenv class_environment) curenv)
+    (let ( (modulnam ()) 
+	   (modsrcname
+	    (cond
+	     ( (is_string outarg) 
+	       (setq modulnam outarg)
+	       (setq modulnam
+		     (make_string_without_suffix discr_string modulnam ".cc"))
+	       (setq modulnam
+		     (make_string_without_dynloaded_suffix discr_string modulnam))
+	       (debug "runfile_docmd sets modulnam=" modulnam " with outarg")
+	       outarg)
+	     ( (is_string inarg) 
+	       (setq modulnam (make_string_nakedbasename discr_string inarg))
+	       (debug "runfile_docmd sets modulnam=" modulnam " with inarg")
+	       (make_string_tempname_suffixed discr_string inarg ".cc"))
+	     (:else
+	      (errormsg_plain "invalid runfile mode")
+	      (return)
+	      )))
+	   )
+      (let ( (modsrcbase (make_string_without_suffix discr_string modsrcname ".cc")) 
+	     )
+      (debug "runfile_docmd before translation inarg=" inarg " modulnam=" modulnam
+	     " modsrcname=" modsrcname
+	     " modsrcbase=" modsrcbase)
+      (translate_to_cc_module_melt_sources inarg modsrcbase curenv)
+      (debug "runfile_docmd after translation modsrcname=" modsrcname
+	     " modulnam=" modulnam)
+      (generate_flavored_melt_module modsrcbase modulnam '"quicklybuilt")
+      (debug "runfile_docmd after generation of module runfile_mode modsrcbase=" modsrcbase
+	     " modulnam=" modulnam)
+      ;; the new environment is silently discarded
+      (ignore (start_melt_module_of_flavor curenv modulnam '"quicklybuilt"))
+      (debug "runfile_docmd done modulnam=" modulnam " modsrcbase=" modsrcbase " return :true")
+      ;; the mode closure should return true to enable further compilation
+      (return :true)
+      ))))
+;;;;
+(definstance runfile_mode
+  class_melt_mode
+  :named_name '"runfile"
+  :meltmode_help '"translate and run a .melt file.\n \t ARGUMENT=
+input file; [OUTPUT=generated C]. The module is quickly compiled and
+has basic debug support thru DEBUG, ASSERT_MSG..."
+  :meltmode_fun runfile_docmd
+)
+(install_melt_mode runfile_mode)
+
+;;;;;;;;;;;;;;;;
+;;;;;
+(defun rundebug_docmd (cmd moduldata)
+  (debug "start rundebug_docmd cmd=" cmd " moduldata=" moduldata)  
+  (let ( 
+	(parmodenv (parent_module_environment))
+	(curenv (if moduldata moduldata initial_environment))
+	(inarg (make_stringconst discr_string (melt_argument "arg")))
+	(outarg (make_stringconst discr_string (melt_argument "output")))
+	)
+    (debug "rundebug_docmd before read rundebug_mode parmodenv=" parmodenv 
+	   " initial_environment=" initial_environment
+	   " inarg=" inarg
+	   " outarg=" outarg)
+    (assert_msg "check curenv" (is_a curenv class_environment) curenv)
+    (let ( (modulnam ()) 
+	   (modsrcname
+	    (cond
+	     ( (is_string outarg) 
+	       (setq modulnam outarg)
+	       (setq modulnam
+		     (make_string_without_suffix discr_string modulnam ".cc"))
+	       (setq modulnam
+		     (make_string_without_dynloaded_suffix discr_string modulnam))
+	       (debug "rundebug_docmd sets modulnam=" modulnam " with outarg")
+	       outarg)
+	     ( (is_string inarg) 
+	       (setq modulnam (make_string_nakedbasename discr_string inarg))
+	       (debug "rundebug_docmd sets modulnam=" modulnam " with inarg")
+	       (make_string_tempname_suffixed discr_string inarg ".cc"))
+	     (:else
+	      (errormsg_plain "invalid rundebug mode")
+	      (return)
+	      )))
+	   )
+      (let ( (modsrcbase (make_string_without_suffix discr_string modsrcname ".cc")) 
+	     )
+      (debug "rundebug_docmd before translation inarg=" inarg " modulnam=" modulnam
+	     " modsrcname=" modsrcname
+	     " modsrcbase=" modsrcbase)
+      (translate_to_cc_module_melt_sources inarg modsrcbase curenv)
+      (debug "rundebug_docmd after translation modsrcname=" modsrcname
+	     " modulnam=" modulnam)
+      (generate_flavored_melt_module modsrcbase modulnam '"debugnoline")
+      (debug "rundebug_docmd after generation of module rundebug_mode modsrcbase=" modsrcbase
+	     " modulnam=" modulnam)
+      ;; the new environment is silently discarded
+      (ignore (start_melt_module_of_flavor curenv modulnam '"debugnoline"))
+      (debug "rundebug_docmd done modulnam=" modulnam " modsrcbase=" modsrcbase " return :true")
+      ;; the mode closure should return true to enable further compilation
+      (return :true)
+      ))))
+
+
+;;;;
+(definstance rundebug_mode
+  class_melt_mode
+  :named_name '"rundebug"
+  :meltmode_help '"translate and run a .melt file for debug;\n
+\t ARGUMENT= input file;  [OUTPUT=generated C]"
+  :meltmode_fun rundebug_docmd
+)
+(install_melt_mode rundebug_mode)
+
+
+;;;;;;;;;;;;;; evaluate a sequence of expressions
+(defun eval_docmd  (cmd moduldata)
+  (debug "start eval_docmd cmd=" cmd " moduldata=" moduldata)  
+  (let ( 
+	(parmodenv (parent_module_environment))
+	(curenv moduldata)
+	(inarg (make_stringconst discr_string (melt_argument "arg")))
+	(inexprs (read_strv inarg))
+	(stdout (get_field :sysdata_stdout initial_system_data))
+	(occmap (make_mapobject  discr_map_objects 50))
+	)
+    (code_chunk evalstart_chk 
+		#{ /* eval_docmd $EVALSTART_CHK */
+		debugeprintf ("eval_docmd start cmd@%p", (void*)$CMD);
+		MELT_LOCATION_HERE ("eval_docmd @*@starting eval@*@");
+		}#)
+    (debug "eval_docmd start parmodenv=" parmodenv 
+	   "\n curenv=" curenv
+	   " inarg=" inarg
+	   "\n inexprs=" inexprs)
+    (assert_msg "check curenv" (is_a curenv class_environment) curenv)
+    (let (
+	  (:long nbexprs (list_length inexprs))
+	  (newenv (let ( (ne (fresh_env curenv 'eval-mode inarg))
+			 )
+		    (debug "eval_docmd newenv=" ne)
+		    ne))
+	  (res (translate_run_melt_expressions inexprs newenv))
+	  (dbgi (instance class_debug_output_information
+			  :dbgi_out stdout
+			  :dbgi_occmap occmap
+			  :dbgi_maxdepth (make_integerbox 
+					  discr_constant_integer (debug_depth))))
+	  )
+      (debug "eval_docmd run res=" res "\n newenv=" newenv "\n dbgi=" dbgi)
+      (add2out stdout "\n;;; result of eval mode of " nbexprs " expression[s] is ...\n")
+      (dbg_out res dbgi 0)
+      (add2out stdout "\n;;; *** end of evaluated result *** \n ")
+      (return :true)
+      )))
+
+(definstance eval_mode
+  class_melt_mode
+  :named_name '"eval"
+  :meltmode_help '"translate and run, i.e. evaluate, MELT expressions, displaying the last evaluated result;\n
+\t ARGUMENT= expressions to evaluate"
+  :meltmode_fun eval_docmd
+)
+(install_melt_mode eval_mode)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; evaluate a sequence of expressions from a file or standard input
+
+(defun evalfile_docmd  (cmd moduldata)
+  (debug "start evalfile_docmd cmd=" cmd " moduldata=" moduldata)  
+  (let ( 
+	(parmodenv (parent_module_environment))
+	(curenv moduldata)
+	(inarg (make_stringconst discr_string (melt_argument "arg")))
+	(inexprs (read_file inarg))
+	(stdout (get_field :sysdata_stdout initial_system_data))
+	(occmap (make_mapobject  discr_map_objects 50))
+	)
+    (code_chunk evalstart_chk 
+		#{ /* evalfile_docmd $EVALSTART_CHK */
+		debugeprintf ("evalfile_docmd start cmd@%p", (void*)$CMD);
+		MELT_LOCATION_HERE ("evalfile_docmd @*@starting eval@*@");
+		}#)
+    (debug "evalfile_docmd start parmodenv=" parmodenv 
+	   "\n curenv=" curenv
+	   " inarg=" inarg
+	   "\n inexprs=" inexprs)
+    (assert_msg "check curenv" (is_a curenv class_environment) curenv)
+    (let (
+	  (:long nbexprs (list_length inexprs))
+	  (newenv (let ( (ne (fresh_env curenv (tuple 'eval-file inarg)))
+			 )
+		    (debug "evalfile_docmd newenv=" ne)
+		    ne))
+	  (res (translate_run_melt_expressions inexprs newenv))
+	  (dbgi (instance class_debug_output_information
+			  :dbgi_out stdout
+			  :dbgi_occmap occmap
+			  :dbgi_maxdepth (make_integerbox 
+					  discr_constant_integer (debug_depth))))
+	  )
+      (debug "evalfile_docmd run res=" res "\n newenv=" newenv "\n dbgi=" dbgi)
+      (add2out stdout "\n;;; Evaluated result of evaluation from file " inarg " of " nbexprs " expression[s] is ...\n")
+      (dbg_out res dbgi 0)
+      (add2out stdout "\n;;; *** end of evaluated result *** \n ")
+      (return :true)
+      )))
+
+(definstance evalfile_mode
+  class_melt_mode
+  :named_name '"evalfile"
+  :meltmode_help '"translate and run, i.e. evaluate, MELT expressions from a file, displaying the last evaluated result;\n
+\t ARGUMENT= file name, or - for stdin"
+  :meltmode_fun evalfile_docmd
+)
+(install_melt_mode evalfile_mode)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; interactive Read Eval Print loop
+;;; repl mode
+(defclass class_read_eval_print_loop_data 
+  :super class_proped
+  :fields (repl_env
+	   repl_counter
+	   repl_contref
+	   repl_data))
+
+(defun repl_processor (inch inlist)
+  (debug "repl_processor inch=" inch "\n inlist=" inlist)
+  (assert_msg "check inch" (is_a inch class_input_channel_handler) inch)
+  (let ( (repldata (get_field :inch_data inch))
+	 (replenv (get_field :repl_env repldata))
+	 (replcounterv (get_field :repl_counter repldata))
+	 (replcontref (get_field :repl_contref repldata))
+	 (:long replcount (get_int replcounterv))
+	 )
+    (assert_msg "check repldata" (is_a repldata class_read_eval_print_loop_data) repldata)
+    (assert_msg "check replenv" (is_a replenv class_environment) replenv)
+    (assert_msg "check replcounterv" (is_integerbox replcounterv) replcounterv)
+    (cond ((null inlist)
+	   (code_chunk eofrepl_chk 
+		       #{ /* repl_processor $EOFREPL_CHK */ 
+		       printf ("\n;;; End of Input on Read-Eval-Print-Loop #%ld\n",
+			       $REPLCOUNT) ;
+		       fflush (NULL) ;
+		       }#)
+	   (set_ref replcontref ())
+	   )
+	  (:else
+	   (assert_msg "check inlist" (is_list inlist) inlist)
+	   (setq replcount (+i replcount 1))
+	   (put_int replcounterv replcount)
+	   (let ( 
+		 (:long inlistlen (list_length inlist))
+		 (stdout (get_field :sysdata_stdout initial_system_data))
+		 )
+	     (debug "repl_processor stdout=" stdout)
+	     (assert_msg "check stdout" (is_out stdout) stdout)
+	     (code_chunk beforevalrepl_chk
+			 #{ /* repl_processor $BEFOREVALREPL_CHK */
+			 printf ("\n;; MELT REPL evaluation #%ld of %ld expressions\n",
+				 $REPLCOUNT, $INLISTLEN) ;
+			 fflush (NULL) ; 
+			 }#)
+	     (set_ref replcontref ())
+	     (let ( (res ())
+		    (occmap (make_mapobject  discr_map_objects 50))
+		    (dbgi (instance class_debug_information
+				    :dbgi_out stdout
+				    :dbgi_occmap occmap
+				    :dbgi_maxdepth (constant_box (+i 3 (debug_depth)))))
+		    )
+	       (debug "repl_processor before translate&run inlist=" inlist
+		      "\n.. replenv=" replenv "\n.. dbgi=" dbgi "\n")
+	       (block_signals 
+		() ()
+		(setq res (translate_run_melt_expressions inlist replenv)))
+	       (debug "repl_processor run res=" res "\n replenv=" replenv "\n dbgi=" dbgi "\n")
+	       (cond ((null res)
+		      (add2out stdout "\n;; Result of REPL #" replcount " is null!\n\n"))
+		     (:else
+		      (add2out stdout "\n;; Result of REPL #" replcount " is:\n")
+		      (dbg_out res dbgi 0)
+		      (add2out stdout "\n\n")))
+	       )
+	     )
+	   ))))
+
+
+(defun repl_docmd (cmd moduldata)
+  (debug "repl_docmd cmd=" cmd " moduldata=" moduldata)
+  (assert_msg "check moduldata" (is_a moduldata class_environment) moduldata)
+  (code_chunk replwelcome_chk 
+	      #{ /* repl_docmd $REPLWELCOME_CHK */
+	      printf ("; Welcome to the MELT interactive Read-Eval-Print-Loop [=REPL]; see gcc-melt.org\n") ;
+	      printf ("; Type a sequence of MELT expressions to be evaluated\n") ;
+	      printf ("; End that sequence with two (2) consecutive newlines.\n") ;
+	      printf ("; Call the CONTINUE function like (CONTINUE) to exit this REPL, or give an end-of-file thru ^D\n") ;
+	      printf ("; Call (WAIT-REPL [welcome-string-value]) from a hook to wait for more input and exit of the REPL\n") ;
+	      fflush (NULL)		;
+	      }#)
+  (let ( (newenv (fresh_env moduldata '"the interactive Read-Eval-Print-Loop environment"))
+	 (refcont (instance class_reference))
+	 (evalcounter (make_integerbox discr_integer 0))
+	 (repldata (instance class_read_eval_print_loop_data
+			     :repl_env newenv
+			     :repl_counter evalcounter
+			     :repl_contref refcont
+			     ))
+	 (contfun (lambda () (set_ref refcont :true)))
+	 (waitfun (lambda (msgv)
+		    (debug "repl_docmd/waitfun start refcont=" refcont 
+			   " evalcounter=" evalcounter "\n msgv=" msgv)
+		    (forever
+		     waitfunloop
+		     (let ( (:long evalcount (get_int evalcounter)) 
+			    )
+		       (if (!refcont) (exit waitfunloop))
+		       (if (null (get_polling_input '0)) 
+					;0 is stdin fd so we exit if
+					;not polling it anymore,
+					;e.g. because got eof
+			   (exit waitfunloop))
+		       (code_chunk waitfunloop_chk
+				   #{ /* repl_docmd $WAITFUNLOOP_CHK */
+				   const char* $WAITFUNLOOP_CHK#_msg = 
+				   melt_string_str ($MSGV) ;
+				   if ($WAITFUNLOOP_CHK#_msg)
+				   printf ("\n;; MELT REPL#%ld waiting: %s\n", 
+					   $EVALCOUNT, $WAITFUNLOOP_CHK#_msg) ;
+				   else
+				   printf ("\n;; MELT REPL#%ld waiting ?\n", 
+					   $EVALCOUNT)	 ;
+				   fflush (NULL)	 ;
+				   }#)
+		       (hook_poll_inputs 60000)) ;60 seconds wait
+		     (debug "repl_docmd/waitfun end refcont=" refcont 
+			    " evalcounter=" evalcounter)
+		     )))
+	 (contvalbind (instance class_value_binding
+				:binder 'continue
+				:vbind_value contfun))
+	 (waitreplbind (instance class_value_binding
+				 :binder 'wait-repl
+				 :vbind_value waitfun))
+	 )
+    (put_env newenv contvalbind)
+    (put_env newenv waitreplbind)
+    (debug "repl_docmd newenv=" newenv " repldata=" repldata)
+    (register_input_channel_handler repl_processor repldata 0)
+    ;; register waiting REPL after all passes
+    (register_all_passes_end_first
+     (lambda (endp)
+       (debug "repl_docmd/endpasses endp=" endp)
+       (code_chunk endp_chk
+		   #{ /* repl_docmd/endpasses $ENDP_CHK */
+		   printf ("; GCC MELT ended all passes\n")   ;
+		   printf ("; type (CONTINUE) to proceed.\n") ;
+		   fflush (NULL)			      ;
+		   }#)
+       (waitfun '"ended all GCC passes")))
+    ;; register waiting REPL after compilation unit ended
+    (at_finish_unit_first
+     (lambda (finp)
+       (debug "repl_docmd/finishunit finp=" finp)
+       (code_chunk finp_chk
+		   #{ /* repl_docmd/finishunit $FINP_CHK */
+		   printf ("; GCC MELT finished compilation unit\n") ;
+		   printf ("; type (CONTINUE) to proceed.\n")	     ;
+		   fflush (NULL)				     ;
+		   }#)
+       (waitfun '"finished compilation unit")))
+    ;; register last REPL at exit
+    (at_exit_last 
+     (lambda (exip)
+       (debug "repl_docmd/atexit exip=" exip)
+       (code_chunk endp_chk
+		   #{ /* repl_docmd/endpasses $ENDP_CHK */
+		   printf ("; GCC MELT exiting\n")	      ;
+		   printf ("; type (CONTINUE) to proceed.\n") ;
+		   fflush (NULL)			      ;
+		   }#)
+       (waitfun '"GCC MELT exiting")))
+    (waitfun '"GCC MELT initial wait")	;initial wait for REPL
+    (return repldata)		 ;return something to succeed the mode
+    ))
+
+(definstance repl_mode
+  class_melt_mode
+  :named_name '"repl"
+  :meltmode_help '"interactive Read Eval Print Loop mode"
+  :meltmode_fun repl_docmd
+)
+(install_melt_mode repl_mode)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; makedoc mode
+(defclass class_makedoc_module_context
+  ;; macro-expansion of defmacro-s needs a module context, so...
+  :doc #{The $CLASS_MAKEDOC_MODULE_CONTEXT aggregates data for
+  generating documentation, and is a module context since
+  macro-expansion needs that.}#
+  :super class_any_module_context
+  :fields (
+	   ;; lists
+	   mkdoc_primitives
+	   mkdoc_functions
+	   mkdoc_citerators
+	   mkdoc_cmatchers
+	   mkdoc_selectors
+	   mkdoc_fields
+	   mkdoc_classes
+	   mkdoc_instances
+	   mkdoc_macros
+	   mkdoc_patmacros
+	   mkdoc_hooks
+	   ;; map from formal symbols to lists of definitions containing them
+	   mkdoc_formaloccmap
+	   ;; map from predefined symbol to definition
+	   mkdoc_predefmap
+	   ;; map from documented symbols to data or definition
+	   mkdoc_docsymap
+	   ;; map from documented classes to list of documented subclasses
+	   mkdoc_subclassmap
+	   ;; boxed counter of documented output
+	   mkdoc_boxcounter
+	   )
+)
+
+;; increment the documentation counter
+(defun increment_mkdoc_counter (mdinfo)
+  (assert_msg "check mdinfo" (is_a mdinfo class_makedoc_module_context) mdinfo)
+  (let ( (dcountbox (get_field :mkdoc_boxcounter mdinfo))
+	 (:long dcnt (get_int dcountbox))
+	 )
+    (assert_msg "check dcount" (is_integerbox dcountbox) dcountbox)
+    (put_int dcountbox (+i dcnt 1)))
+  )
+
+
+(defun makedoc_scaninput (mdinfo arglist xlist)
+  (debug "makedoc_scaninput arglist=" arglist "\n.. xlist=" xlist)
+  (shortbacktrace_dbg "makedoc_scaninput" 10)
+  (let (
+	(:long nbfil (list_length arglist))
+	(:long xlistlen (list_length xlist))
+	(docsymap (get_field :mkdoc_docsymap mdinfo))
+	(formaloccmap (get_field :mkdoc_formaloccmap mdinfo))
+	(add_docsym
+	 (lambda (nam data)
+	   (cond 
+	    ( (and (!= (discrim nam) class_symbol)
+		   (is_a nam class_named))
+	      (setq nam (get_symbolstr (get_field :named_name nam))))
+	    ( (is_string nam)
+	      (setq nam (get_symbolstr nam)))
+	    )
+	   (assert_msg "check nam" (is_a nam class_symbol) nam)
+	   (mapobject_put docsymap
+			  nam
+			  data)))
+	(fetch_docsym
+	 (lambda (nam)
+	   (cond 
+	    ( (and (!= (discrim nam) class_symbol)
+		   (is_a nam class_named))
+	      (setq nam (get_symbolstr (get_field :named_name nam))))
+	    ( (is_string nam)
+	      (setq nam (get_symbolstr nam)))
+	    )
+	   (mapobject_get docsymap nam)))
+	(add_formal_occ
+	 (lambda (formbind def)
+	   (assert_msg "check formbind" (is_a formbind class_formal_binding) formbind)
+	   (assert_msg "check def" (is_a def class_source_definition) def)
+	   (let ( (formsym (get_field :binder formbind)) 
+		  (formocclist (mapobject_get formaloccmap formsym))
+		  )
+	     (if (null formocclist)
+		 (progn
+		   (setq formocclist (make_list discr_list))
+		   (mapobject_put formaloccmap formsym formocclist)))
+	     (list_append formocclist def)
+	     )
+	   ))
+	)
+    (debug "makedoc_scaninput before loop xlist=" xlist)
+    (each_component_in_list
+     xlist
+     curexp
+     (debug "makedoc_scaninput curexp=" curexp)
+     (match 
+      curexp 
+;;;;;;;;;;;
+;;; handle defclass
+      (?(instance
+	 class_source_defclass
+	 :sdef_name ?dnam
+	 :sdef_doc 
+	 ?(instance class_sexpr 
+		    :loca_location ?docloc
+		    :sexp_contents ?docont)
+	 :sobj_predef ?predef
+	 :sclass_clabind ?(instance class_class_binding :cbind_class ?clas)
+	 )
+	(debug "makedoc_docmd defclass clas=" clas)
+	(assert_msg "check clas" (is_a clas class_class) clas)
+	(if predef 
+	    (mapobject_put (get_field :mkdoc_predefmap mdinfo) predef curexp))
+	(add_docsym dnam curexp)
+	(list_append (get_field :mkdoc_classes mdinfo) curexp)
+;;; add into :mkdoc_fields each own field
+	(foreach_in_multiple 
+	 ((get_field :class_fields clas))
+	 (curfld :long fldix)
+	 (if (== (get_field :fld_ownclass curfld) clas)
+	     (progn
+	       (add_docsym (get_field :named_name curfld) curfld)
+	       (list_append (get_field :mkdoc_fields mdinfo) curfld)))
+	 )
+;;; add into :mkdoc_subclassmap this class as subclass of each
+;;; documented ancestor
+	(let ( (subclmap (get_field :mkdoc_subclassmap mdinfo)) )
+	  (foreach_in_multiple 
+	   ((get_field :class_ancestors clas))
+	   (curanc :long ancix)
+	   (let ( (curancsubcl (mapobject_get  (get_field :mkdoc_subclassmap mdinfo) curanc)) )
+	     (if (null curancsubcl)
+		 (progn
+		   (setq curancsubcl (make_list discr_list))
+		   (mapobject_put 
+		    (get_field :mkdoc_subclassmap mdinfo) curanc curancsubcl)
+		   ))
+	     (list_append curancsubcl clas)
+	     )
+	   )))
+;;;;
+;;; handle defselector
+      (?(instance
+	 class_source_defselector
+	 :sdef_name ?dnam
+	 :sdef_doc 
+	 ?(instance class_sexpr 
+		    :loca_location ?docloc
+		    :sexp_contents ?docont)
+	 :sobj_predef ?predef
+	 :sinst_class ?icla
+	 )
+	(list_append (get_field :mkdoc_selectors mdinfo) curexp)
+	(add_docsym dnam curexp)
+	(if predef 
+	    (mapobject_put (get_field :mkdoc_predefmap mdinfo) predef curexp))
+	)
+;;; handle definstance
+      (?(instance
+	 class_source_definstance
+	 :sdef_name ?dnam
+	 :sdef_doc 
+	 ?(instance class_sexpr 
+		    :loca_location ?docloc
+		    :sexp_contents ?docont)
+	 :sobj_predef ?predef
+	 :sinst_class ?icla
+	 )
+	(add_docsym dnam curexp)
+	(list_append (get_field :mkdoc_instances mdinfo) curexp)
+	(if predef 
+	    (mapobject_put (get_field :mkdoc_predefmap mdinfo) predef curexp))
+	)
+;;;;;;;
+;;; handle defprimitive
+      (?(instance
+	 class_source_defprimitive
+	 :sdef_name ?dnam
+	 :sdef_doc 
+	 ?(instance class_sexpr 
+		    :loca_location ?docloc
+		    :sexp_contents ?docont)
+	 :sformal_args ?formargs
+	 )
+	(add_docsym dnam curexp)
+	(list_append (get_field :mkdoc_primitives mdinfo) curexp)
+	(foreach_in_multiple 
+	 (formargs)
+	 (curformb :long formix)
+	 (add_formal_occ curformb curexp) ) 
+	)
+;;;;;;;
+;;; handle defmacro before defun
+      (?(instance
+	 class_source_defmacro
+	 :sdef_name ?dnam
+	 :sdef_doc 
+	 ?(instance class_sexpr 
+		    :loca_location ?docloc
+		    :sexp_contents ?docont)
+	 :sformal_args ?formargs
+	 )
+	(add_docsym dnam curexp)
+	(list_append (get_field :mkdoc_macros mdinfo) curexp)
+	(foreach_in_multiple 
+	 (formargs)
+	 (curformb :long formix)
+	 (add_formal_occ curformb curexp) ) 
+	)
+;;;;;;;
+;;; handle defun
+      (?(instance
+	 class_source_defun
+	 :sdef_name ?dnam
+	 :sdef_doc 
+	 ?(instance class_sexpr 
+		    :loca_location ?docloc
+		    :sexp_contents ?docont)
+	 :sformal_args ?formargs
+	 )
+	(add_docsym dnam curexp)
+	(list_append (get_field :mkdoc_functions mdinfo) curexp)
+	(foreach_in_multiple 
+	 (formargs)
+	 (curformb :long formix)
+	 (add_formal_occ curformb curexp) ) 
+	)
+;;;;;;;
+;;; handle defciterator
+      (?(instance
+	 class_source_defciterator
+	 :sdef_name ?dnam
+	 :sdef_doc 
+	 ?(instance class_sexpr 
+		    :loca_location ?docloc
+		    :sexp_contents ?docont)
+	 :sformal_args ?formargs
+	 )
+	(add_docsym dnam curexp)
+	(list_append (get_field :mkdoc_citerators mdinfo) curexp)
+	(foreach_in_multiple 
+	 (formargs)
+	 (curformb :long formix)
+	 (add_formal_occ curformb curexp) ) 
+	)
+;;;;;;;
+;;; handle defcmatcher
+      (?(instance
+	 class_source_defcmatcher
+	 :sdef_name ?dnam
+	 :sdef_doc 
+	 ?(instance class_sexpr 
+		    :loca_location ?docloc
+		    :sexp_contents ?docont)
+	 :sformal_args ?formargs
+	 )
+	(add_docsym dnam curexp)
+	(list_append (get_field :mkdoc_cmatchers mdinfo) curexp)
+	(foreach_in_multiple 
+	 (formargs)
+	 (curformb :long formix)
+	 (add_formal_occ curformb curexp) ) 
+	)
+;;;;;;;
+;;; handle export_patmacro
+      (?(instance
+	 class_source_export_patmacro
+	 :loca_location ?loc
+	 :sexpmac_mname ?mname
+	 :sexpmac_doc 
+	 ?(instance class_sexpr 
+		    :loca_location ?docloc
+		    :sexp_contents ?docont)
+	 )
+	(add_docsym mname curexp)
+	(list_append (get_field :mkdoc_patmacros mdinfo) curexp)
+	)
+;;;;;;;
+;;; handle export_macro
+      (?(instance
+	 class_source_export_macro
+	 :loca_location ?loc
+	 :sexpmac_mname ?mname
+	 :sexpmac_doc 
+	 ?(instance class_sexpr 
+		    :loca_location ?docloc
+		    :sexp_contents ?docont)
+	 )
+	(add_docsym mname curexp)
+	(list_append (get_field :mkdoc_macros mdinfo) curexp)
+	)
+;;;;;;;
+;;; handle defhook
+      (?(instance
+	 class_source_defhook
+	 :loca_location ?loc
+	 :sdef_name ?mname
+	 :sdef_doc 
+	 ?(instance class_sexpr 
+		    :loca_location ?docloc
+		    :sexp_contents ?docont)
+	 )
+	(add_docsym mname curexp)
+	(list_append (get_field :mkdoc_hooks mdinfo) curexp)
+	)
+;;;;;;;
+;;; catchall with warning
+      (?(instance class_source_definition 
+		  :sdef_name ?dnam
+		  :sdef_doc 
+		  ?(and ?doc 
+			?(instance class_sexpr :loca_location ?loc :sexp_contents ?docl)))
+	(debug "makedoc_scaninput dnam=" dnam " doc=" doc)
+	(inform_at loc "makedoc: got documented $1" (get_field :named_name dnam))
+	(warning_at loc "makedoc: unimplemented for class $1" (get_field :named_name (discrim curexp)))
+	)
+      (?_
+       (debug "ignored curexp=" curexp)
+       )
+      ))))
+    
+
+
+;;;;;;;;;;;;;;;;
+;;;;; output the location, if any, of a definition
+(defun makedoc_outdefloc (outb def :cstring prefstr)
+  (assert_msg "check outb" (is_strbuf outb) outb)
+  (assert_msg "check def" (is_a def class_source_definition) def)
+  (let ( (loc (get_field :loca_location def)) 
+	 )
+    (if (null loc) (return))
+    (add2sbuf_strconst outb prefstr)
+    (add2sbuf_texi_mixloc outb loc)
+    (add2sbuf_strconst outb ".")
+    (add2sbuf_indentnl outb 0)
+    )
+)
+
+;;;; output a formal argument tuple
+(defun makedoc_outformals (outb fargs :cstring prefstr)
+  (assert_msg "check outb" (is_strbuf outb) outb)
+  (if (>i (multiple_length fargs) 0)
+      (progn
+	(add2sbuf_indentnl outb 0)
+	(add2sbuf_strconst outb prefstr)
+	(add2sbuf_indentnl outb 0)
+	(add2sbuf_strconst outb "@multitable @columnfractions 0.05 0.15 0.4")
+	(add2sbuf_indentnl outb 0)
+	(add2sbuf_strconst outb "@headitem index @tab type @tab name")
+	(foreach_in_multiple
+	 (fargs)
+	 (curfbind :long fix)
+	 (assert_msg "check curfbind" (is_a curfbind class_formal_binding) curfbind)
+	 (add2sbuf_indentnl outb 0)
+	 (add2sbuf_strconst outb "@item @i{")
+	 (add2sbuf_longdec outb fix)
+	 (add2sbuf_strconst outb "} @tab @slanted{")
+	 (add2sbuf_string 
+	  outb 
+	  (get_field :named_name 
+		     (get_field :ctype_keyword 
+				(get_field :fbind_type curfbind))))
+	 (let ( (argnam (get_field :named_name (get_field :binder curfbind))) )
+	   (add2sbuf_strconst outb "} @tab @code{")
+	   (add2sbuf_string outb argnam)
+	   (add2sbuf_strconst outb "}")
+	   (add2sbuf_indentnl outb 0)
+	   (add2sbuf_strconst outb "@vindex ")
+	   (add2sbuf_string outb argnam)
+	   (add2sbuf_indentnl outb 0)
+	   )
+	 )
+	(add2sbuf_indentnl outb 0)
+	(add2sbuf_strconst outb "@end multitable")
+	(add2sbuf_indentnl outb 0)
+	)))
+
+
+;;;; output the :doc sexpr
+(defun makedoc_outdoc (outb doc :cstring prefstr)
+  (assert_msg "check outb" (is_strbuf outb) outb)
+  (if (is_not_a doc class_sexpr) (return))
+  (add2sbuf_indentnl outb 0)
+  (add2sbuf_strconst outb prefstr)
+  ;; output the documentation
+  (foreach_pair_component_in_list
+   ( (unsafe_get_field :sexp_contents doc) )
+   (curpair curelem)
+   (cond 
+    ( (is_string curelem)
+      (add2sbuf_string outb curelem))
+    ( (is_a curelem class_named)
+      (add2sbuf_strconst outb "@code{")
+      (add2sbuf_string outb (unsafe_get_field :named_name curelem))
+      (add2sbuf_strconst outb "}")
+      )
+    )
+   )
+  (add2sbuf_indentnl outb 0)
+  ;; output the vindex entries
+  (foreach_pair_component_in_list
+   ( (unsafe_get_field :sexp_contents doc) )
+   (curpair curelem)
+   (cond 
+    ( (is_a curelem class_named)
+      (add2sbuf_strconst outb "@vindex ")
+      (add2sbuf_string outb (unsafe_get_field :named_name curelem))
+      (add2sbuf_indentnl outb 0)
+      )
+    )
+   )
+  )
+
+;;;;;;;;;;;;;;;;
+;;;;; generate the documentation of a single class definition
+(defun makedoc_outclassdef (mdinfo outb cladef :long claix)
+  (assert_msg "check mdinfo" (is_a mdinfo class_makedoc_module_context) mdinfo)
+  (assert_msg "check outb" (is_strbuf outb) outb)
+  (assert_msg "check cladef" (is_a cladef class_source_defclass) cladef)
+  (let ( (cla (get_field :cbind_class (get_field :sclass_clabind cladef)))
+	 (clancs (get_field :class_ancestors cla))
+	 (clflds (get_field :class_fields cla))
+	 (:long nbclanc (multiple_length clancs))
+	 (:long nbclflds (multiple_length clflds))
+	 (doc (get_field :sdef_doc cladef))
+	 (subclalist (mapobject_get (get_field :mkdoc_subclassmap mdinfo) cla))
+	 )
+    (assert_msg "check cla" (is_a cla class_class) cla)
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "@subsection @var{")
+    (add2sbuf_string outb (get_field :named_name cla))
+    (add2sbuf_strconst outb "}")
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "@vindex ")
+    (add2sbuf_string outb (get_field :named_name cla))
+    (add2sbuf_indentnl outb 0)
+    (makedoc_outdefloc outb cladef "Class defined at ")
+    ;; output the list of ancestors
+    (if (>i nbclanc 0)
+	(progn
+	  (add2sbuf_indentnl outb 0)
+	  (add2sbuf_strconst outb "@strong{")
+	  (add2sbuf_longdec outb nbclanc)
+	  (add2sbuf_strconst outb " ancestors:}")
+	  (foreach_in_multiple
+	   (clancs)
+	   (curanc :long ancix)
+	   (debug "makedoc_outclassdef curanc=" curanc " ancix#" ancix)
+	   (assert_msg "check curanc" (is_a curanc class_class) curanc)
+	   (add2sbuf_strconst outb " @code{")
+	   (add2sbuf_string outb (get_field :named_name curanc))
+	   (add2sbuf_strconst outb "}")
+	   )
+	  (add2sbuf_strconst outb ".")
+	  (add2sbuf_indentnl outb 0)
+	  ))
+    ;; output the list of fields
+    (if (>i nbclflds 0)
+	(progn
+	  (add2sbuf_indentnl outb 0)
+	  (add2sbuf_strconst outb "@strong{")
+	  (add2sbuf_longdec outb nbclflds)
+	  (add2sbuf_strconst outb " fields:}")
+	  (add2sbuf_indentnl outb 0)
+	  (add2sbuf_strconst outb "@multitable @columnfractions 0.08 0.4 0.4")
+	  (add2sbuf_indentnl outb 0)
+	  (add2sbuf_strconst outb "@headitem offset @tab name @tab class")
+	  (add2sbuf_indentnl outb 0)
+	  (foreach_in_multiple
+	   (clflds)
+	   (curfld :long fldix)
+	   (debug  "makedoc_outclassdef curfld=" curfld " fldix=" fldix)
+	   (assert_msg "check curfld" (is_a curfld class_field) curfld)
+	   (add2sbuf_indentnl outb 0)
+	   (add2sbuf_strconst outb "@item ")
+	   (add2sbuf_longdec outb fldix)
+	   (let ( (fldcla (get_field :fld_ownclass curfld)) )
+	     (if (== fldcla cla)
+		 (progn
+		   (add2sbuf_strconst outb " @tab @strong{")
+		   (add2sbuf_string outb (get_field :named_name curfld))
+		   (add2sbuf_strconst outb "} @tab @emph{@code{")
+		   (add2sbuf_string outb (get_field :named_name fldcla))
+		   (add2sbuf_strconst outb "}}")
+		   (add2sbuf_indentnl outb 0)
+		   (add2sbuf_strconst outb "@vindex ")
+		   (add2sbuf_string outb (get_field :named_name curfld))
+		   (add2sbuf_indentnl outb 0)
+		   )
+	       (progn
+		 (add2sbuf_strconst outb " @tab @emph{")
+		 (add2sbuf_string outb (get_field :named_name curfld))
+		 (add2sbuf_strconst outb "}")
+		 (add2sbuf_indentnl outb 0)
+		 (add2sbuf_strconst outb "@tab @code{")
+		 (add2sbuf_string outb (get_field :named_name fldcla))
+		 (add2sbuf_strconst outb "} ")
+		 ))
+	     (add2sbuf_indentnl outb 0)
+	     )
+	   )
+	  (add2sbuf_strconst outb "@end multitable")
+	  (add2sbuf_indentnl outb 0)
+	  )
+      )
+    ;; output the list of documented subclasses, if any
+    (if subclalist
+	(let ( (rawsubclatup (list_to_multiple subclalist discr_multiple)) 
+	       (sortedsubclatup (multiple_sort rawsubclatup
+					       compare_named_alpha
+					       discr_multiple))
+	       (:long nbsubcla (multiple_length sortedsubclatup))
+	       )
+	  (add2sbuf_indentnl outb 0)
+	  (debug "makedoc_outclassdef sortedsubclatup=" sortedsubclatup)
+	  (add2sbuf_strconst outb "@strong{")
+	  (add2sbuf_longdec outb nbsubcla)
+	  (add2sbuf_strconst outb " sub-classes:}")
+	  (add2sbuf_indentnl outb 0)
+	  (foreach_in_multiple
+	   (sortedsubclatup)
+	   (subcla :long sclix)
+	   (if (>i sclix 0) 
+	       (add2sbuf_strconst outb ","))
+	   (add2sbuf_strconst outb " @code{")
+	   (add2sbuf_string outb (get_field :named_name subcla))
+	   (add2sbuf_strconst outb "}")
+	   )
+	  (add2sbuf_strconst outb ".")
+	  (add2sbuf_indentnl outb 0) 
+	  )
+      )
+;;; output the class description
+    (makedoc_outdoc outb doc "@strong{class description:} ")
+    (add2sbuf_indentnl outb 0) 
+    (increment_mkdoc_counter mdinfo)
+    )
+  )
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;
+;;;;; generate the macro documentation
+(defun makedoc_genmacro (mdinfo outb)
+  (assert_msg "check mdinfo" (is_a mdinfo class_makedoc_module_context) mdinfo)
+  (assert_msg "check outb" (is_strbuf outb) outb)
+  (add2sbuf_strconst outb "@node MELT macros")
+  (add2sbuf_indentnl outb 0)
+  (add2sbuf_strconst outb "@section MELT macros")
+  (add2sbuf_indentnl outb 0)
+  (add2sbuf_indentnl outb 0)
+  (let ( (maclist (get_field :mkdoc_macros mdinfo))
+	 (unsortedmactuple
+	  (let ( (tm (list_to_multiple maclist discr_multiple))
+		 )
+	    (foreach_in_multiple
+	     (tm)
+	     (curmac :long macix)
+	     (assert_msg "check curmac" 
+			 (or (is_a curmac class_source_export_macro)
+			     (is_a curmac class_source_defmacro))
+			 curmac)
+	     )
+	    tm))
+	 (sortedmactuple
+	  (multiple_sort unsortedmactuple
+			 (lambda (ms1 ms2)
+			   (compare_named_alpha
+			    (or (get_field :sexpmac_mname ms1)
+				(get_field :sdef_name ms1))
+			    (or (get_field :sexpmac_mname ms2)
+				(get_field :sdef_name ms2))
+			    )
+			   )
+			 discr_multiple))
+	 )
+    (debug "makedoc_genmacro maclist=" maclist 
+	   "\n * unsortedmactuple=" unsortedmactuple 
+	   "\n * sortedmactuple=" sortedmactuple "\n")
+    (add2sbuf_strconst outb "There are ")
+    (add2sbuf_longdec outb (multiple_length sortedmactuple))
+    (add2sbuf_strconst outb " documented macros.")
+    (add2sbuf_indentnl outb 0)	
+    (add2sbuf_indentnl outb 0)	
+    (foreach_in_multiple
+     (sortedmactuple)
+     (curmac :long macix)
+     (debug "makedoc_genmacro curmac=" curmac " macix=" macix)
+     (assert_msg "check curmac" (or 
+				 (is_a curmac class_source_export_macro)
+				 (is_a curmac class_source_defmacro))
+		 curmac)
+     (let (
+	   (:long isdefmacro (is_a curmac class_source_defmacro))
+	   (mnam (get_field :named_name (if isdefmacro 
+					    (get_field :sdef_name curmac)
+					  (get_field :sexpmac_mname curmac))))
+	   (mloc (get_field :loca_location curmac))
+	   (mdoc (if isdefmacro (get_field :sdef_doc curmac)
+				 (get_field :sexpmac_doc curmac)))
+	   )
+       (assert_msg "check mnam" (is_string mnam) mnam)
+       (add2sbuf_indentnl outb 0)
+       (add2sbuf_strconst outb "@subsection @var{")
+       (add2sbuf_string outb mnam)
+       (add2sbuf_strconst outb "}")
+       (add2sbuf_indentnl outb 0)
+       (add2sbuf_strconst outb "@vindex ")
+       (add2sbuf_string outb mnam)
+       (add2sbuf_indentnl outb 0)
+       ;; don't use makedoc_outdefloc since this is not a definition!
+       (when mloc
+	 (add2sbuf_strconst outb "Macro defined at ")
+	 (add2sbuf_texi_mixloc outb mloc)
+	 (add2sbuf_strconst outb ".")
+	 (add2sbuf_indentnl outb 0)
+	 )
+       (makedoc_outdoc outb mdoc "@strong{macro description:} ")
+       (add2sbuf_indentnl outb 0) 
+       )
+     (increment_mkdoc_counter mdinfo)
+     )
+    )
+  )
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;
+;;;;; generate the pattern macro documentation
+(defun makedoc_genpatmacro (mdinfo outb)
+  (assert_msg "check mdinfo" (is_a mdinfo class_makedoc_module_context) mdinfo)
+  (assert_msg "check outb" (is_strbuf outb) outb)
+  (add2sbuf_strconst outb "@node MELT patterns")
+  (add2sbuf_indentnl outb 0)
+  (add2sbuf_strconst outb "@section MELT pattern macros")
+  (add2sbuf_indentnl outb 0)
+  (add2sbuf_indentnl outb 0)
+  (let ( (patmaclist (get_field :mkdoc_patmacros mdinfo))
+	 (rawpatmactuple (list_to_multiple patmaclist discr_multiple))
+	 (sortedpatmactuple
+	  (progn
+	    (foreach_in_multiple
+	     rawpatmactuple
+	     (curpms :long pmsix)
+	     (assert_msg "makedoc_genpatmacro check curpms"
+			 (is_a curpms class_source_export_macro) curpms))
+	    (multiple_sort rawpatmactuple
+			   (lambda (pms1 pms2)
+			     (compare_named_alpha 
+			      (get_field :sexpmac_mname pms1)
+			      (get_field :sexpmac_mname pms2)))
+			 discr_multiple)))
+	 )
+    (add2sbuf_strconst outb "There are ")
+    (add2sbuf_longdec outb (multiple_length sortedpatmactuple))
+    (add2sbuf_strconst outb " documented pattern-macros.")
+    (add2sbuf_indentnl outb 0)
+    (debug "makedoc_genpatmacro rawpatmactuple=" rawpatmactuple
+	   " sortedpatmactuple=" sortedpatmactuple)
+    (foreach_in_multiple
+     (sortedpatmactuple)
+     (patmac :long pmacix)
+     (debug "makedoc_genpatmacro patmac=" patmac " pmacix=" pmacix)
+     (assert_msg "check patmac" (is_a patmac class_source_export_patmacro) patmac)
+     (add2sbuf_indentnl outb 0)
+     (let ( (mnam (get_field :named_name (get_field :sexpmac_mname patmac)))
+	    (mloc (get_field :loca_location patmac))
+	    (mdoc (get_field :sexpmac_doc patmac))
+	    )
+       (assert_msg "check mnam" (is_string mnam) mnam)
+       (add2sbuf_indentnl outb 0)
+       (add2sbuf_strconst outb "@subsection @var{")
+       (add2sbuf_string outb mnam)
+       (add2sbuf_strconst outb "}")
+       (add2sbuf_indentnl outb 0)
+       (add2sbuf_strconst outb "@vindex ")
+       (add2sbuf_string outb mnam)
+       (add2sbuf_indentnl outb 0)
+       ;; don't use makedoc_outdefloc since this is not a definition!
+       (if mloc
+	   (progn
+	     (add2sbuf_strconst outb "Pattern macro defined at ")
+	     (add2sbuf_texi_mixloc outb mloc)
+	     (add2sbuf_strconst outb ".")
+	     (add2sbuf_indentnl outb 0)
+	     ))
+       (makedoc_outdoc outb mdoc "@strong{pattern macro description:} ")
+       (add2sbuf_indentnl outb 0) 
+       )
+     (increment_mkdoc_counter mdinfo)
+     )
+    )
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;
+;;;;; generate the class documentation
+(defun makedoc_genclass (mdinfo outb)
+  (assert_msg "check mdinfo" (is_a mdinfo class_makedoc_module_context) mdinfo)
+  (assert_msg "check outb" (is_strbuf outb) outb)
+  (add2sbuf_strconst outb "@node MELT classes")
+  (add2sbuf_indentnl outb 0)
+  (add2sbuf_strconst outb "@section MELT classes")
+  (add2sbuf_indentnl outb 0)
+  (add2sbuf_indentnl outb 0)
+  (let ( 
+	(quotedone '1)
+	(quotedzero '0)
+	(quotedminusone '-1)
+	(unsortedclassestuple 
+	 (list_to_multiple 
+	  (get_field :mkdoc_classes mdinfo)
+	  discr_multiple
+	  (lambda (cldef)
+	    (assert_msg "check cldef" (is_a cldef class_source_defclass) cldef)
+	    (get_field :cbind_class (get_field :sclass_clabind cldef)))
+	  ))
+	(cmpclassdepthname
+	 (lambda (cl0 cl1)
+	   (assert_msg "check cl0" (is_a cl0 class_class) cl0)
+	   (assert_msg "check cl1" (is_a cl1 class_class) cl1)
+	   (let ( (cl0anc (unsafe_get_field :class_ancestors cl0))
+		  (cl1anc (unsafe_get_field :class_ancestors cl1))
+		  (:long nbcl0anc (multiple_length cl0anc))
+		  (:long nbcl1anc (multiple_length cl1anc))
+		  (cl0nam (unsafe_get_field :named_name cl0))
+		  (cl1nam (unsafe_get_field :named_name cl1))
+		  )
+	     (cond 
+	      ( (== cl0 cl1) 
+		quotedzero)
+	      ( (<i nbcl0anc nbcl1anc) 
+		quotedminusone)
+	      ( (>i nbcl0anc nbcl1anc) 
+		quotedone)
+	      ( (string< cl0nam cl1nam)
+		quotedminusone)
+	      ( (string> cl0nam cl1nam)
+		quotedone)
+	      (:else
+;;; this should not happen
+	       (assert_msg "cmpclassdepthname same name different classes!" () cl0 cl1)
+	       ())
+	      )
+	     )
+	   )
+	 )
+	(cmpclassname
+	 (lambda (cl0 cl1)
+	   (assert_msg "check cl0" (is_a cl0 class_class) cl0)
+	   (assert_msg "check cl1" (is_a cl1 class_class) cl1)
+	   (let ( (cl0nam (unsafe_get_field :named_name cl0))
+		  (cl1nam (unsafe_get_field :named_name cl1))
+		  )
+	     (cond
+	      ( (== cl0 cl1) 
+		quotedzero)
+	      ( (string< cl0nam cl1nam)
+		quotedminusone)
+	      ( (string> cl0nam cl1nam)
+		quotedone)
+	      (:else
+;;; this should not happen
+	       (assert_msg "cmpclassname same name different classes!" () cl0 cl1)
+	       ())
+	      )
+	     )))
+	(depthsortedclassestuple
+	 (multiple_sort unsortedclassestuple cmpclassdepthname discr_multiple)
+	 )
+	(cmpclassdef
+	 (lambda (cdf0 cdf1)
+	   (assert_msg "check cdf0" (is_a cdf0 class_source_defclass) cdf0)
+	   (assert_msg "check cdf1" (is_a cdf1 class_source_defclass) cdf1)
+	   (compare_named_alpha (get_field :sdef_name cdf0) (get_field :sdef_name cdf1))
+	   ))
+	(alphasortedclassdeftuple
+	 (multiple_sort 
+	  (list_to_multiple (get_field :mkdoc_classes mdinfo)
+			    discr_multiple)  
+	  cmpclassdef discr_multiple)
+	 )
+	(:long depthix -1)
+	(:long prevclaix -1)
+	)
+    (add2sbuf_strconst outb "Table of classes sorted by inheritance depth.")
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "@table @strong")
+    (add2sbuf_indentnl outb 0)
+    (foreach_in_multiple
+     (depthsortedclassestuple)
+     (curcla :long claix)
+     (assert_msg "check curcla" (is_a curcla class_class) curcla)
+     (let ( (:long nbanc (multiple_length (get_field :class_ancestors curcla))) )
+       (if (<i depthix nbanc)
+	   (progn
+	     (setq depthix nbanc)
+	     (setq prevclaix claix)
+	     (add2sbuf_indentnl outb 0)
+	     (add2sbuf_strconst outb "@item ")
+	     (add2sbuf_longdec outb depthix)
+	     (add2sbuf_strconst outb ": ")
+	     (add2sbuf_indentnl outb 0))
+	 (add2sbuf_strconst outb ",")
+	 )
+       (add2sbuf_strconst outb " @code{")
+       (add2sbuf_string outb (get_field :named_name curcla))
+       (add2sbuf_strconst outb "}")
+       )
+     ) 
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "@end table")
+    (add2sbuf_indentnl outb 0)
+    (foreach_in_multiple
+     (alphasortedclassdeftuple)
+     (curcladef :long claix)
+     (assert_msg "check curcladef" (is_a curcladef class_source_defclass) curcladef)
+     (makedoc_outclassdef mdinfo outb curcladef claix) ;which also increments the counter
+     )
+    )
+  )
+
+
+;;;;; output a primitive
+(defun makedoc_outprimitivedef (mdinfo outb primdef :long primix)
+  (assert_msg "check mdinfo" (is_a mdinfo class_makedoc_module_context) mdinfo)
+  (assert_msg "check outb" (is_strbuf outb) outb)
+  (assert_msg "check primdef" (is_a primdef class_source_defprimitive) primdef)
+  (let ( (pnam (get_field :sdef_name primdef)) 
+	 (args (get_field :sformal_args primdef))
+	 (type (get_field :sprim_type primdef))
+	 (doc (get_field :sdef_doc primdef))
+	 )
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "@subsection @var{")
+    (add2sbuf_string outb (get_field :named_name pnam))
+    (add2sbuf_strconst outb "}")
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "@vindex ")
+    (add2sbuf_string outb (get_field :named_name pnam))
+    (add2sbuf_indentnl outb 0)
+    (makedoc_outdefloc outb primdef "Primitive defined at ")
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "@strong{result type:} @code{")
+    (add2sbuf_string outb (get_field :named_name (get_field :ctype_keyword type)))
+    (add2sbuf_strconst outb "}")
+    (add2sbuf_indentnl outb 0)
+    (makedoc_outformals outb args "@strong{primitive formals:}")
+    ;;; output the primitive description
+    (makedoc_outdoc outb doc "@strong{primitive description:} ")
+    (increment_mkdoc_counter mdinfo)
+    (add2sbuf_indentnl outb 0) 
+    ))
+
+;;;;; generate the primitive documentation
+(defun makedoc_genprimitive (mdinfo outb)
+  (assert_msg "check mdinfo" (is_a mdinfo class_makedoc_module_context) mdinfo)
+  (assert_msg "check outb" (is_strbuf outb) outb)
+  (add2sbuf_strconst outb "@node MELT primitives")
+  (add2sbuf_indentnl outb 0)
+  (add2sbuf_strconst outb "@section MELT primitives")
+  (add2sbuf_indentnl outb 0)
+  (add2sbuf_indentnl outb 0)
+  (let ( (rawprimlist (get_field :mkdoc_primitives mdinfo))
+	 (rawprimtup (list_to_multiple rawprimlist discr_multiple))
+	 (sortedprimtup
+	  (progn
+	    (foreach_in_multiple 
+	     (rawprimtup)
+	     (curprim :long primix)
+	     (assert_msg "makedoc_genprimitive check curprim"
+			 (is_a curprim class_source_defprimitive) curprim))
+	    (multiple_sort 
+	     rawprimtup 
+	     (lambda (sdpri1 sdpri2)
+	       (compare_named_alpha 
+		(get_field :sdef_name sdpri1)
+		(get_field :sdef_name sdpri2)))
+	     discr_multiple)))
+	 )
+    (debug "makedoc_genprimitive rawprimtup=" rawprimtup
+	   " sortedprimtup=" sortedprimtup)
+    (add2sbuf_strconst outb "There are ")
+    (add2sbuf_longdec outb (multiple_length sortedprimtup))
+    (add2sbuf_strconst outb " primitives.")
+    (add2sbuf_indentnl outb 0)
+    (foreach_in_multiple
+     (sortedprimtup)
+     (curprimdef :long primix)
+     (assert_msg "check curprimdef" (is_a curprimdef class_source_defprimitive) curprimdef)
+     (makedoc_outprimitivedef mdinfo outb curprimdef primix)
+     (add2sbuf_indentnl outb 0)
+     )
+    )
+  )
+
+
+;;;;;;;;;;;;;;;;
+;;;;; output a function
+(defun makedoc_outfunctiondef (mdinfo outb fundef :long primix)
+  (assert_msg "check mdinfo" (is_a mdinfo class_makedoc_module_context) mdinfo)
+  (assert_msg "check outb" (is_strbuf outb) outb)
+  (assert_msg "check fundef" (is_a fundef class_source_defun) fundef)
+  (let ( (fnam (get_field :sdef_name fundef)) 
+	 (args (get_field :sformal_args fundef))
+	 (doc (get_field :sdef_doc fundef))
+	 )
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "@subsection @var{")
+    (add2sbuf_string outb (get_field :named_name fnam))
+    (add2sbuf_strconst outb "}")
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "@vindex ")
+    (add2sbuf_string outb (get_field :named_name fnam))
+    (add2sbuf_indentnl outb 0)
+    (makedoc_outdefloc outb fundef "Function defined at ")
+    (add2sbuf_indentnl outb 0)
+    (makedoc_outformals outb args "@strong{Function formals:}")
+    ;;; output the function description
+    (makedoc_outdoc outb doc "@strong{Function description:} ")
+    (increment_mkdoc_counter mdinfo)
+    (add2sbuf_indentnl outb 0) 
+    ))
+
+;;;;; generate the function documentation
+(defun makedoc_genfunction (mdinfo outb)
+  (assert_msg "check mdinfo" (is_a mdinfo class_makedoc_module_context) mdinfo)
+  (assert_msg "check outb" (is_strbuf outb) outb)
+  (add2sbuf_strconst outb "@node MELT functions")
+  (add2sbuf_indentnl outb 0)
+  (add2sbuf_strconst outb "@section MELT functions")
+  (add2sbuf_indentnl outb 0)
+  (add2sbuf_indentnl outb 0)
+  (let ( (rawfunlist (get_field :mkdoc_functions mdinfo))
+	 (rawfuntup (list_to_multiple rawfunlist discr_multiple))
+	 (sortedfuntup (multiple_sort 
+			rawfuntup 
+			(lambda (df1 df2) 
+			  (compare_named_alpha (get_field :sdef_name df1) (get_field :sdef_name df2)))
+			discr_multiple))
+	 )
+    (debug "makedoc_genfunction rawfuntup=" rawfuntup "\n* sortedfuntup=" sortedfuntup)
+    (add2sbuf_strconst outb "There are ")
+    (add2sbuf_longdec outb (multiple_length sortedfuntup))
+    (add2sbuf_strconst outb " functions.")
+    (add2sbuf_indentnl outb 0)
+    (foreach_in_multiple
+     (sortedfuntup)
+     (curfundef :long funix)
+     (assert_msg "check curfun" (is_a curfundef class_source_defun) curfundef)
+     (debug "makedoc_genfunction curfundef=" curfundef " funix=" funix)
+     (makedoc_outfunctiondef mdinfo outb curfundef funix) ;also increments the counter
+     (add2sbuf_indentnl outb 0)
+     )
+    )
+  )
+
+
+;;;;;;;;;;;;;;;;
+;;;;; generate the citerators documentation
+(defun makedoc_genciterator (mdinfo outb)
+  (assert_msg "check mdinfo" (is_a mdinfo class_makedoc_module_context) mdinfo)
+  (assert_msg "check outb" (is_strbuf outb) outb)
+  (add2sbuf_strconst outb "@node MELT c-iterators")
+  (add2sbuf_indentnl outb 0)
+  (add2sbuf_strconst outb "@section MELT c-iterators")
+  (add2sbuf_indentnl outb 0)
+  (add2sbuf_indentnl outb 0)
+  (let ( (rawciterlist (get_field :mkdoc_citerators mdinfo))
+	 (rawcitertup (list_to_multiple rawciterlist discr_multiple))
+	 (sortedcitertup 
+	  (multiple_sort 
+	   rawcitertup 
+	   (lambda (is1 is2)
+	     (compare_named_alpha 
+	      (get_field :sdef_name is1)
+	      (get_field :sdef_name is2)))
+	   discr_multiple))
+	 )
+    (debug "makedoc_genciterator rawciterlist=" rawciterlist
+	   " sortedcitertup=" sortedcitertup)
+    (add2sbuf_strconst outb "There are ")
+    (add2sbuf_longdec outb (multiple_length sortedcitertup))
+    (add2sbuf_strconst outb " c-iterators.")
+    (add2sbuf_indentnl outb 0)
+    (foreach_in_multiple
+     (sortedcitertup)
+     (curciterdef :long citix)
+     (debug "makedoc_genciterator curciterdef=" curciterdef " citix=" citix)
+     (assert_msg "check curciterdef" (is_a curciterdef class_source_defciterator) curciterdef)
+     (let ( (sloc (get_field :loca_location curciterdef) )
+	    (snam (get_field :sdef_name curciterdef))
+	    (sdoc (get_field :sdef_doc curciterdef))
+	    (citer (get_field :sciterdef_citerator curciterdef))
+	    )
+       (assert_msg "check citer" (is_a citer class_citerator) citer)
+       (add2sbuf_indentnl outb 0)
+       (add2sbuf_strconst outb "@subsection @var{")
+       (add2sbuf_string outb (get_field :named_name snam))
+       (add2sbuf_strconst outb "}")
+       (add2sbuf_indentnl outb 0)
+       (add2sbuf_strconst outb "@vindex ")
+       (add2sbuf_string outb (get_field :named_name snam))
+       (add2sbuf_indentnl outb 0)
+       (makedoc_outdefloc outb curciterdef "C-iterator defined at ")
+       (add2sbuf_indentnl outb 0)
+       (makedoc_outformals outb (get_field :citer_start_formals citer) "@strong{c-iterator start formals:}")
+       (add2sbuf_indentnl outb 0)
+       (makedoc_outformals outb (get_field :citer_body_formals citer) "@strong{c-iterator body formals:}")
+;;; output the citerator description
+       (makedoc_outdoc outb sdoc "@strong{C-iterator description:} ")
+       (increment_mkdoc_counter mdinfo)
+       (add2sbuf_indentnl outb 0) 
+       )
+     )
+    )
+  (compile_warning "makedoc_genciterator incomplete")
+  )
+
+
+;;;;;;;;;;;;;;;;
+;;;;; generate the cmatchers documentation
+(defun makedoc_gencmatcher (mdinfo outb)
+  (assert_msg "check mdinfo" (is_a mdinfo class_makedoc_module_context) mdinfo)
+  (assert_msg "check outb" (is_strbuf outb) outb)
+  (add2sbuf_strconst outb "@node MELT c-matchers")
+  (add2sbuf_indentnl outb 0)
+  (add2sbuf_strconst outb "@section MELT c-matchers")
+  (add2sbuf_indentnl outb 0)
+  (add2sbuf_indentnl outb 0)
+  (let ( (rawcmatchlist (get_field :mkdoc_cmatchers mdinfo))
+	 (rawcmatchtup (list_to_multiple rawcmatchlist discr_multiple))
+	 (sortedcmatchtup
+	  (multiple_sort 
+	   rawcmatchtup 
+	   (lambda (sm1 sm2)
+	     (compare_named_alpha 
+	      (get_field :sdef_name sm1)
+	      (get_field :sdef_name sm2)))
+	   discr_multiple))
+	 )
+    (add2sbuf_strconst outb "There are ")
+    (add2sbuf_longdec outb (multiple_length sortedcmatchtup))
+    (add2sbuf_strconst outb " c-matchers.")
+    (add2sbuf_indentnl outb 0)
+    (foreach_in_multiple
+     (sortedcmatchtup)
+     (curcmatchdef :long citix)
+     (debug "makedoc_gencmatcher curcmatchdef=" curcmatchdef " citix=" citix)
+     (assert_msg "check curcmatchdef" (is_a curcmatchdef class_source_defcmatcher) curcmatchdef)
+     (let (
+	   (snam (get_field :sdef_name curcmatchdef))
+	   (sdoc (get_field :sdef_doc curcmatchdef))
+	   (cmatch (get_field :scmatdef_cmatcher curcmatchdef)) 
+	   (cmin (get_field :amatch_in cmatch))
+	   (cmabind (get_field :amatch_matchbind cmatch))
+	   (cmout (get_field :amatch_out cmatch))
+	   )
+       (add2sbuf_indentnl outb 0)
+       (add2sbuf_strconst outb "@subsection @var{")
+       (add2sbuf_string outb (get_field :named_name snam))
+       (add2sbuf_strconst outb "}")
+       (add2sbuf_indentnl outb 0)
+       (add2sbuf_strconst outb "@vindex ")
+       (add2sbuf_string outb (get_field :named_name snam))
+       (add2sbuf_indentnl outb 0)
+       (makedoc_outdefloc outb curcmatchdef "C-matcher defined at ")
+       (add2sbuf_indentnl outb 0)
+       (add2sbuf_strconst outb "@strong{c-matcher matching formal:} @var{")
+       (let ( (manamb (get_field :binder cmabind)) )
+	 (add2sbuf_string outb (get_field :named_name manamb)) 
+	 (add2sbuf_strconst outb "} - @slanted{")
+	 (add2sbuf_string outb 
+			  (get_field :named_name 
+				     (get_field :ctype_keyword 
+						(get_field :fbind_type cmabind))))
+	 (add2sbuf_strconst outb "}")
+	 (add2sbuf_indentnl outb 0)
+	 (add2sbuf_strconst outb "@vindex ")
+	 (add2sbuf_string outb (get_field :named_name manamb)) 
+	 (add2sbuf_indentnl outb 0)
+	 )
+       (makedoc_outformals outb cmin "@strong{c-matcher input formals:}")
+       (add2sbuf_indentnl outb 0)
+       (makedoc_outformals outb cmout "@strong{c-matcher output formals:}")
+       (add2sbuf_indentnl outb 0)
+       (makedoc_outdoc outb sdoc "@strong{C-matcher description:} ")
+       (add2sbuf_indentnl outb 0)
+       (increment_mkdoc_counter mdinfo)
+       )
+     )
+    )
+  )
+
+;;;;;;;;;;;;;;;;
+;;;;; generate the hook documentation
+(defun makedoc_genhook (mdinfo outb)
+  (assert_msg "check mdinfo" (is_a mdinfo class_makedoc_module_context) mdinfo)
+  (assert_msg "check outb" (is_strbuf outb) outb)
+  (add2sbuf_strconst outb "@node MELT hooks")
+  (add2sbuf_indentnl outb 0)
+  (add2sbuf_strconst outb "@section MELT hooks")
+  (add2sbuf_indentnl outb 0)
+  (add2sbuf_indentnl outb 0)
+  (let ( (rawhooklist (get_field :mkdoc_hooks mdinfo))
+	 (rawhooktup (list_to_multiple rawhooklist discr_multiple))
+	 (sortedhooktup
+	  (multiple_sort 
+	   rawhooktup 
+	   (lambda (sm1 sm2)
+	     (compare_named_alpha 
+	      (get_field :sdef_name sm1)
+	      (get_field :sdef_name sm2)))
+	   discr_multiple))
+	 )
+    (add2sbuf_strconst outb "There are ")
+    (add2sbuf_longdec outb (multiple_length sortedhooktup))
+    (add2sbuf_strconst outb " hooks.")
+    (add2sbuf_indentnl outb 0)
+    (foreach_in_multiple
+     (sortedhooktup)
+     (curhook :long hix)
+     (debug "makedoc_genhook curhook=" curhook)
+     (assert_msg "check curhook" (is_a curhook class_source_defhook) curhook)
+     (let ( (loc (get_field :loca_location curhook))
+	    (name (get_field :sdef_name curhook))
+	    (doc (get_field :sdef_doc curhook))
+	    (ins (get_field :sformal_args curhook))
+	    (outs (get_field :shook_out_formals curhook))
+	    (hctyp (get_field :shook_ctype curhook))
+	    (predef (get_field :shook_predef curhook))
+	    (hvar (get_field :shook_variable curhook))
+	    )
+       (add2sbuf_indentnl outb 0)
+       (add2sbuf_strconst outb "@subsection @var{")
+       (add2sbuf_string outb (get_field :named_name name))
+       (add2sbuf_strconst outb "} hook")
+       (add2sbuf_indentnl outb 0)
+       (add2sbuf_strconst outb "@vindex ")
+       (add2sbuf_string outb (get_field :named_name name))
+       (add2sbuf_indentnl outb 0)
+       (makedoc_outdefloc outb curhook "Hook defined at ")
+       (add2sbuf_indentnl outb 0)
+       (makedoc_outformals outb ins "@strong{hook input formals:}")
+       (add2sbuf_indentnl outb 0)
+       (makedoc_outformals outb outs "@strong{hook output formals:}")
+       (add2sbuf_indentnl outb 0)
+       (add2out outb 
+		"@strong{hook result ctype:} "
+		(get_field :named_name 
+			   (get_field :ctype_keyword hctyp))
+)
+       (add2sbuf_indentnl outb 0)
+       (when (is_a predef class_named)
+	 (add2out outb "Hook @strong{predefined as}: "
+		  "@code{" (get_field :named_name predef) "}.")
+	 (add2sbuf_indentnl outb 0)
+	 (add2sbuf_indentnl outb 0)
+	 )
+       (when (is_a hvar class_named)
+	 (add2out outb "Hook @strong{stored in module variable}: "
+		  "@code{" (get_field :named_name hvar) "}.")
+	 (add2sbuf_indentnl outb 0)
+	 (add2sbuf_indentnl outb 0))
+       (makedoc_outdoc outb doc "@strong{Hook description:} ")
+       (add2sbuf_indentnl outb 0)
+       (add2sbuf_indentnl outb 0)
+       (increment_mkdoc_counter mdinfo)
+       )
+     )
+    )
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;; makedoc - generate the output file
+(compile_warning "should list selectors and document their formals if given")
+(defun makedoc_genoutput (mdinfo outarg)
+  (debug "makedoc_genoutput mdinfo=" mdinfo)
+  (assert_msg "check mdinfo" (is_a mdinfo class_makedoc_module_context) mdinfo)
+  (assert_msg "check outarg" (is_string outarg) outarg)
+  (let ( (outb (make_strbuf discr_strbuf)) 
+	 )
+    (add2sbuf_strconst outb "@c **** makedoc generated file ")
+    (add2sbuf_string outb outarg)
+    (add2sbuf_indentnl outb 0)
+    (code_chunk 
+     outdat
+     #{/* makedoc_genoutput $OUTDAT */ { time_t now$OUTDAT = 0;
+     time (&now$OUTDAT);
+     meltgc_add_out_raw ((melt_ptr_t) $OUTB, "@c **** generated ") ;
+     meltgc_add_out_raw ((melt_ptr_t) $OUTB, ctime (&now$OUTDAT)) ;
+     } /* end makedoc_genoutput $OUTDAT */ }#)
+    (add2sbuf_strconst outb "@node MELT Programming Reference")
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "@chapter MELT Programming Reference")
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_indentnl outb 0)
+
+    (let ( (datestr ())
+	   (versionstr ())
+	   )
+      (code_chunk getdatestr_chk #{ /* makedoc_genoutput $GETDATESTR_CHK */
+		  time_t now = 0;
+		  char nowbuf[64];
+		  time (&now);
+		  memset (nowbuf, 0, sizeof(nowbuf));
+		  strftime (nowbuf, sizeof(nowbuf)-1, "%B %d, %Y", localtime(&now));
+		  $DATESTR = meltgc_new_string ((meltobject_ptr_t) MELT_PREDEF(DISCR_STRING),
+						nowbuf);
+		  $VERSIONSTR = meltgc_new_string ((meltobject_ptr_t) MELT_PREDEF(DISCR_STRING),
+						   melt_version_str ());
+		  }#)
+      (add2out outb ##{This documentation is @strong{generated} on @emph{$DATESTR} by @emph{MELT $VERSIONSTR}.}#)
+      (add2sbuf_indentnl outb 0)
+      )
+    ;; Some people suggested outputting an GFDL license. But
+    ;; others objected.  A paragraph of code doing that was
+    ;; removed after rev.160339 see
+    ;; http://gcc.gnu.org/ml/gcc-patches/2010-06/msg00767.html
+    ;; http://gcc.gnu.org/ml/gcc/2010-05/msg00674.html
+    ;; http://gcc.gnu.org/ml/gcc/2010-05/msg00125.html
+    ;; http://gcc.gnu.org/ml/gcc/2010-05/msg00749.html etc.
+
+    (add2sbuf_strconst outb "@menu")
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "* MELT macros:: The MELT macros.")
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "* MELT patterns:: The MELT pattern macros.")
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "* MELT classes:: The MELT classes.")
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "* MELT primitives:: The MELT primitives.")
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "* MELT functions:: The MELT functions.")
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "* MELT c-iterators:: The MELT c-iterators.")
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "* MELT c-matchers:: The MELT c-matchers.")
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "* MELT hooks:: The MELT hooks.")
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "@end menu")
+    (add2sbuf_indentnl outb 0)
+    ;; generate macro related stuff
+    (makedoc_genmacro mdinfo outb)
+    ;; generate patmacro related stuff
+    (makedoc_genpatmacro mdinfo outb)
+    ;; generate class related stuff
+    (makedoc_genclass mdinfo outb)
+    ;; generate primitive related stuff
+    (makedoc_genprimitive mdinfo outb)
+    ;; generate function related stuff
+    (makedoc_genfunction mdinfo outb)
+    ;; generate c-iterators related stuff
+    (makedoc_genciterator mdinfo outb)
+    ;; generate c-matchers related stuff
+    (makedoc_gencmatcher mdinfo outb)
+    ;; generate hooks related stuff
+    (makedoc_genhook mdinfo outb)
+    ;;
+    (add2sbuf_indentnl outb 0)
+    (add2sbuf_strconst outb "@c **** end of makedoc generated file ")
+    (add2sbuf_string outb outarg)
+    (add2sbuf_indentnl outb 0)	
+    (cond ( (melt_error_counter)
+	    (let ( (outerr 
+		    (string4out discr_string outarg "-p" 
+				(expr_chunk getpid_chk :long #{ /* makedoc_genoutput $GETPID_CHK */ (long) getpid() }#)
+				".tmp"))
+		   )
+	      (errormsg_strv "MELT makedoc failed so outputting " outerr)
+	      (output_sbuf_strval outb outerr)
+	      )
+	    )
+	  (:else
+	   (output_sbuf_strval outb outarg)
+	   (let ( (:long countdoc (get_int (get_field :mkdoc_boxcounter mdinfo)))
+		  )
+	     (if countdoc 
+		 (inform_at () "MELT makedoc generated $1 documentation items"
+			    countdoc)
+	       (error_at () "MELT makedoc generate no documentation items" outarg))
+	     (assert_msg "makedoc check counter" (>i countdoc 0) countdoc)
+	     )
+	   )
+	  )
+    )
+  )
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;
+(defun makedoc_docmd (cmd moduldata)
+  (debug "start makedoc_docmd cmd=" cmd " moduldata=" moduldata)
+  (let ( 
+	(parmodenv (parent_module_environment))
+	(curenv (if moduldata 
+		    moduldata 
+		  (deref (current_module_environment_reference))))
+	(arglist (split_string_comma discr_string (make_stringconst discr_string (melt_argument "arglist"))))
+	(outarg (make_stringconst discr_string (melt_argument "output")))
+	(rlist (make_list discr_list))
+	(modnam (let ( (sbuf (make_strbuf discr_strbuf))
+		       )
+		  (add2out sbuf "meltmakedoc_")
+		  (add2out_cident sbuf (make_string_nakedbasename discr_string outarg))
+		  (strbuf2string discr_string sbuf)))
+	(macroenv (fresh_env curenv (tuple 'macro-doc outarg)))
+	(mdinfo 
+	 (instance class_makedoc_module_context
+		   :mocx_modulename modnam
+		   :mocx_expfieldict (make_mapstring discr_map_strings 211)
+		   :mocx_expclassdict (make_mapstring discr_map_strings 131)
+		   :mocx_initialenv curenv
+		   :mocx_macroenv macroenv
+		   :mocx_funcount (make_integerbox discr_integer 0)
+		   :mocx_filetuple ()
+		   :mocx_cheaderlist (make_list discr_list)
+		   :mocx_cimplementlist (make_list discr_list)
+		   :mocx_varcount (make_integerbox discr_integer 0)
+		   :mocx_varlist (make_list discr_list)
+		   :mocx_hookdict (make_mapstring discr_map_strings 101)
+		   :mocx_macrolist (make_list discr_list)
+		   ;; :mocx_cflags (make_list discr_list)
+		   ;; :mocx_linkflags (make_list discr_list)
+		   :mocx_packagepclist (make_list discr_list)
+		   :mocx_gendevlist (make_list discr_list)
+		   :mkdoc_primitives (make_list discr_list)
+		   :mkdoc_functions (make_list discr_list) 
+		   :mkdoc_citerators (make_list discr_list)
+		   :mkdoc_cmatchers (make_list discr_list)
+		   :mkdoc_selectors (make_list discr_list)
+		   :mkdoc_fields (make_list discr_list)
+		   :mkdoc_classes (make_list discr_list) 
+		   :mkdoc_instances (make_list discr_list)
+		   :mkdoc_macros (make_list discr_list)
+		   :mkdoc_patmacros (make_list discr_list)
+		   :mkdoc_hooks (make_list discr_list)
+		   :mkdoc_formaloccmap (make_mapobject discr_map_objects 1000)
+		   :mkdoc_predefmap (make_mapobject discr_map_objects 200)
+		   :mkdoc_docsymap (make_mapobject discr_map_objects 400)
+		   :mkdoc_subclassmap (make_mapobject discr_map_objects 400)
+		   :mkdoc_boxcounter (make_integerbox discr_integer 0)
+		   ))
+	)
+    (debug "makedoc_docmd arglist=" arglist " outarg=" outarg "\n.. empty mdinfo=" debug_less mdinfo) ;; read into rlist all the stuff
+    (if (not (is_list rlist))
+	(errormsg_plain 
+	 "makedoc MELT mode needs an -f[plugin-arg-]melt-arglist of comma-separated *.melt file[s]"))
+    (if (not (is_string outarg))
+	(errormsg_plain 
+	 "makedoc MELT mode needs an -f[plugin-arg-]melt-output *.texi file"))
+    (set_ref melt_mode_reference mdinfo)
+    (assert_msg "check rlist" (is_list rlist) rlist)
+    (let ( (xalllist (make_list discr_list))
+	   )
+      (debug "makedoc_docmd before looping inside arglist=" arglist)
+      (each_component_in_list 
+       arglist 
+       curargfile
+       (debug "make_list curargfile=" curargfile)
+       (let ( (curead (read_file curargfile))
+	      (newenv (fresh_env curenv (tuple 'env-doc modnam curargfile)))
+	      )
+	 (debug "makedoc_docmd curead=" curead "\n..curargfile=" curargfile)
+	 (assert_msg "check curead" (is_list_or_null curead) curead)
+	 (inform_at () "mode makedoc read $1 s-expressions from file $2" (list_length curead) curargfile)
+	 (list_append2list rlist curead)
+	 (let ( (curxlist (macroexpand_toplevel_list curead newenv macroexpand_1 mdinfo))
+		(:long curxlistlen (list_length curxlist))
+		)
+	   (inform_at () "mode makedoc macro-expanded $1 expressions from file $2" curxlistlen curargfile)
+	   (debug "makedoc_docmd curxlist=" curxlist)
+	   (list_append2list xalllist curxlist)
+	   ))
+       ;; macro expand it
+       (debug "makedoc_docmd have read rlist=" rlist "\n.. expanded into xalllist=" xalllist "\n")
+       ;; (setq curenv newenv)
+       ;; (debug "makedoc_docmd for curargfile=" curargfile " updated curenv=" curenv)
+       )
+      (debug "makedoc_docmd arglist=" arglist "\n.. xalllist=" xalllist)
+      ;; scan the expanded input, and fill mdinfo appropriately.
+      (makedoc_scaninput mdinfo arglist xalllist)
+      (inform_at () "mode makedoc scanned $1 macro-expanded source trees" (list_length xalllist))
+      (debug "makedoc_docmd after scan mdinfo=" mdinfo)
+      ;; generate the output
+      (makedoc_genoutput mdinfo outarg)
+      (debug "makedoc_docmd done mdinfo=" mdinfo " outarg=" outarg)
+      ;; the mode succeeds if some doc has been generated
+      (if (>i (get_int (get_field :mkdoc_boxcounter mdinfo)) 0)
+	  (return :true))
+      ))
+  )
+
+;;;
+(definstance makedoc_mode
+  class_melt_mode
+  :named_name '"makedoc"
+  :meltmode_help '"generate .texi documentation from .melt source files;\n
+\t ARGLIST= input file, ...; OUTPUT= generated file"
+  :meltmode_fun makedoc_docmd
+)
+(install_melt_mode makedoc_mode)
+
+(export_class class_makedoc_module_context)
+
+;;;;;;;;;;;;;;;;
+;;;;;
+(defun showvar_docmd (cmd moduldata)
+  (debug "start showvar_docmd cmd=" cmd " moduldata=" moduldata)
+  (let (
+	(parmodenv (parent_module_environment))
+	(env (if moduldata moduldata parmodenv))
+	(inarg (make_stringconst discr_string (melt_argument "arg")))
+	(insymb (get_symbolstr inarg))
+	)
+    (assert_msg "check moduldata" (is_a moduldata class_environment) moduldata)
+    (if (is_a insymb class_symbol)
+	(let ( (symbind (find_env env insymb))
+	       (symname (unsafe_get_field :named_name insymb))
+	       )
+	  (if symbind
+	      (progn
+		(debug "showvar_docmd symbind=" symbind)
+		(informsg_strv "found binding for " symname)
+		(return))
+	    (errormsg_strv "no binding found for " symname)
+	    )
+	  (errormsg_strv "unknown symbol to show" inarg)
+	  ))))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defun help_docmd (cmd moduldata)
+  (message_dbg "starting help_docmd")
+  (let ( (cmdict (get_field :sysdata_mode_dict initial_system_data))
+	 (cmdlist (make_list discr_list))
+	 )
+    (foreach_in_mapstring
+     (cmdict)
+     (curname curcmd)
+     (assert_msg "check curcmd" (is_a curcmd class_melt_mode) curcmd)
+     (list_append cmdlist curcmd)
+     )
+    (let ( (rawcmdtup (list_to_multiple cmdlist))
+	   (sortedcmdtup (multiple_sort rawcmdtup compare_named_alpha discr_multiple))
+	   (:long nbcmd (multiple_length sortedcmdtup))
+	   (:cstring versionstr (melt_version_str))
+	   )
+      (debug "help_docmd sortedcmdtup=" sortedcmdtup)
+      (code_chunk saynbmode_chk 
+		  #{ /* $SAYNBMODE_CHK */ 
+		  inform (UNKNOWN_LOCATION, 
+			  "There are %ld modes in MELT %s", 
+			  $NBCMD, $VERSIONSTR);
+		  fflush (stderr);
+		  fflush (stdout);
+		  }#)
+      (foreach_in_multiple
+       (sortedcmdtup)
+       (curmod :long modix)
+       (assert_msg "check curmod" (is_a curmod class_melt_mode) curmod)
+       (let ( (modnam (unsafe_get_field :named_name curmod))
+	      (modhelp (unsafe_get_field :meltmode_help curmod))
+	      )
+	 (code_chunk saymode_chk
+		     #{printf (" * %s : %s\n", /* $SAYMODE_CHK */
+			       melt_string_str ((melt_ptr_t) $MODNAM),
+			       melt_string_str ((melt_ptr_t) $MODHELP)) ;
+		     }#)			     
+	 ))
+      (code_chunk flush_chk 
+		  #{
+		  putchar ('\n');
+		  fflush (stderr);
+		  fflush (stdout);
+#ifdef MELT_IS_PLUGIN
+                  inform (UNKNOWN_LOCATION, " use -fplugin-arg-melt-mode= to set the MELT mode[s] separated by comma");
+#else
+                  inform (UNKNOWN_LOCATION, " use -fmelt-mode= to set the MELT mode[s] separated by comma");
+#endif /*MELT_IS_PLUGIN*/
+		  }#)
+      (return ())			;to fail the mode and avoid
+					;further compilation
+      )))
+
+(definstance help_mode
+  class_melt_mode
+  :named_name '"help"
+  :meltmode_help '"MELT help about available modes."
+  :meltmode_fun help_docmd
+)
+(install_melt_mode help_mode)
+
+
+(defun nop_docmd  (cmd moduldata)
+  (debug "in nop_docmd cmd=" cmd)
+  (return :true)			;succeed the nop mode
+  )
+
+(definstance nop_mode
+  class_melt_mode
+  :named_name '"nop"
+  :meltmode_help '"a mode doing nothing."
+  :meltmode_fun nop_docmd
+)
+(install_melt_mode nop_mode)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; internal function to generate the magic enum
+(defun generate_runtypesupport_enum_objmagic (ctygtytup valdesctup outarg outbuf)
+  (debug "generate_runtypesupport_enum_objmagic start outarg=" outarg)
+  (let 
+      ( 
+       (:long curobjmagic 20000)
+       (:long countobjmagic 0)
+       )
+    (assert_msg "check ctygtytup" (is_multiple ctygtytup) ctygtytup)
+    (assert_msg "check valdesctup" (is_multiple valdesctup) valdesctup)
+    (assert_msg "check outbuf" (is_strbuf outbuf) outbuf)
+    (strbuf_reserve outbuf 65000)
+    ;;
+    ;;;;;;;;;;;;;;;;
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_string outbuf
+     #{$' /** from generate_runtypesupport_enum_objmagic **/
+     enum meltobmag_en /*generated*/ 
+     { 
+       MELTOBMAG__NONE = 0,
+     }#)
+    (add2sbuf_indentnl outbuf 1)
+    (add2sbuf_strconst outbuf "MELTOBMAG__FIRST /* first valid object magic */ =")
+     (add2sbuf_longdec outbuf curobjmagic)
+    (add2sbuf_strconst outbuf ",")
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_strconst outbuf "/* value descriptor object magic */")
+    (foreach_in_multiple
+     (valdesctup)
+     (curvaldesc :long vix)
+     (debug "generate_runtypesupport_enum_objmagic curvaldesc=" curvaldesc 
+	    " vix=" vix)
+     (assert_msg "check curvaldesc" (is_a curvaldesc class_value_descriptor) curvaldesc)
+     (add2sbuf_indentnl outbuf 1)
+     (add2sbuf_strconst outbuf "/*valdesc #")
+     (add2sbuf_longdec outbuf (+i 1 vix))
+     (add2sbuf_strconst outbuf " ")
+     (add2sbuf_ccomstring outbuf (get_field :named_name curvaldesc))
+     (add2sbuf_strconst outbuf "*/")
+     (add2sbuf_indentnl outbuf 2)
+     (add2sbuf_string outbuf (get_field :valdesc_objmagic curvaldesc))
+     (add2sbuf_strconst outbuf " /*valmagic*/ =")
+     (add2sbuf_longdec outbuf curobjmagic)
+     (add2sbuf_strconst outbuf ",")
+     (add2sbuf_indentnl outbuf 2)
+     (setq curobjmagic (+i 1 curobjmagic))
+     (setq countobjmagic (+i countobjmagic 1))
+     )
+    ;;;;;;;;;;;;;;;;
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_strconst outbuf "/* ctype gty object magic */")
+    (foreach_in_multiple
+     (ctygtytup)
+     (curctyp :long tix)
+     (debug "generate_runtypesupport_enum_objmagic curctyp=" curctyp
+	    " tix=" tix)
+     (assert_msg "check curctyp" (is_a curctyp class_ctype_gty) curctyp)
+     (add2sbuf_indentnl outbuf 1)
+     (add2sbuf_strconst outbuf "/*gtyctype magic #")
+     (add2sbuf_longdec outbuf (+i 1 tix))
+     (add2sbuf_strconst outbuf " ")
+     (add2sbuf_ccomstring outbuf (get_field :named_name curctyp))
+     (add2sbuf_strconst outbuf "*/")
+     (add2sbuf_indentnl outbuf 2)
+     (add2sbuf_string outbuf (get_field :ctypg_boxedmagic curctyp))
+     (add2sbuf_strconst outbuf " /*boxedmagic*/ =")
+     (add2sbuf_longdec outbuf curobjmagic)
+     (add2sbuf_strconst outbuf ",")
+     (add2sbuf_indentnl outbuf 2)
+     (add2sbuf_string outbuf (get_field :ctypg_mapmagic curctyp))
+     (add2sbuf_strconst outbuf " /*mapmagic*/ =")
+     (add2sbuf_longdec outbuf (+i curobjmagic 1))
+     (add2sbuf_strconst outbuf ",")
+     (setq curobjmagic (+i curobjmagic 2))
+     (setq countobjmagic (+i countobjmagic 1))
+     )
+    (debug "generate_runtypesupport_objmagic end outarg=" outarg)
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_strconst outbuf " MELTOBMAG__LAST }; /* end generated enum meltobmag_en */")
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_strconst outbuf "#define MELT_COUNT_GENERATED_OBJMAGIC ")
+    (add2sbuf_longdec outbuf countobjmagic)
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_strconst outbuf "/*** end from generate_runtypesupport_enum_objmagic **/")
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_indentnl outbuf 0)
+    )
+  )
+;;;;;;;;;;;;;;;;
+
+;; internal function to generate the gty struct-s and union-s
+(defun generate_runtypesupport_gty  (ctygtytup valdesctup outarg outbuf)
+  (debug "generate_runtypesupport_gty start outarg=" outarg)
+  (assert_msg "check ctygtytup" (is_multiple ctygtytup) ctygtytup)
+  (assert_msg "check valdesctup" (is_multiple valdesctup) valdesctup)
+  (assert_msg "check outbuf" (is_strbuf outbuf) outbuf)
+  (strbuf_reserve outbuf 65000)
+;;;;;;;;;;;;;;;;
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_strconst outbuf "/** generated by generate_runtypesupport_gty **/")
+;;;;
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_string outbuf #{$'
+#ifndef meltobject_ptr_t_TYPEDEFINED
+typedef struct meltobject_st* meltobject_ptr_t ;
+#define meltobject_ptr_t_TYPEDEFINED
+#endif /*meltobject_ptr_t_TYPEDEFINED*/
+}#)
+;;;;
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_string outbuf #{$'
+#ifndef melt_ptr_t_TYPEDEFINED
+typedef union melt_un* melt_ptr_t ;
+#define melt_ptr_t_TYPEDEFINED
+#endif /*melt_ptr_t_TYPEDEFINED*/
+}#)
+;;;;
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_string outbuf #{$'
+#ifndef meltroutine_ptr_t_TYPEDEFINED
+typedef struct meltroutine_st *meltroutine_ptr_t ;
+#define meltroutine_ptr_t_TYPEDEFINED
+#endif /*meltroutine_ptr_t_TYPEDEFINED*/
+}#)
+;;;;
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_string outbuf #{$'
+#ifndef meltclosure_ptr_t_TYPEDEFINED
+typedef struct meltclosure_st *meltclosure_ptr_t ;
+#define meltclosure_ptr_t_TYPEDEFINED
+#endif /*meltclosure_ptr_t_TYPEDEFINED*/
+}#)
+;;;;
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_string outbuf 
+#{$'
+#ifndef meltroutfun_t_TYPEDEFINED
+typedef melt_ptr_t meltroutfun_t (struct meltclosure_st* meltclosp_,
+                                  melt_ptr_t meltfirstargp_,
+                                  const melt_argdescr_cell_t meltxargdescr_[],
+                                  union meltparam_un *meltxargtab_,
+                                  const melt_argdescr_cell_t meltxresdescr_[],
+                                  union meltparam_un *meltxrestab_) ;
+#define meltroutfun_t_TYPEDEFINED
+#endif /*meltroutfun_t_TYPEDEFINED*/
+}#)
+  (add2sbuf_indentnl outbuf 0)
+;;;;
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_strconst outbuf "/* generated ctype gty structures */")
+  (add2sbuf_indentnl outbuf 0)
+  (foreach_in_multiple
+   (ctygtytup)
+   (curctyp :long ix)
+   (debug "generate_runtypesupport_gty curctyp=" curctyp " ix=" ix)
+   (assert_msg "check curctyp" (is_a curctyp class_ctype_gty) curctyp)
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_strconst outbuf "/*gtyctypebox gtyctyp #")
+   (add2sbuf_longdec outbuf (+i 1 ix))
+   (add2sbuf_strconst outbuf " ")
+   (add2sbuf_ccomstring outbuf (get_field :named_name curctyp))
+   (add2sbuf_strconst outbuf "*/")
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_strconst outbuf "struct GTY (()) ")
+   (add2sbuf_string outbuf (get_field :ctypg_boxedstruct curctyp))
+   (add2sbuf_strconst outbuf " { /* when ")
+   (add2sbuf_string outbuf (get_field :ctypg_boxedmagic curctyp))
+   (add2sbuf_strconst outbuf "*/")
+   (add2sbuf_indentnl outbuf 3)
+   (add2sbuf_strconst outbuf "meltobject_ptr_t discr;")
+   (add2sbuf_indentnl outbuf 3)
+   (add2sbuf_string outbuf (get_field :ctype_cname curctyp))
+   (add2sbuf_strconst outbuf " val;")
+   (add2sbuf_indentnl outbuf 0)
+   (add2out outbuf "#ifndef MELT_NO_CONVERSION_OPERATOR")
+   (add2sbuf_indentnl outbuf 3)
+   (add2out outbuf "operator melt_ptr_t () { return reinterpret_cast<melt_ptr_t>(this); }")
+   (add2sbuf_indentnl outbuf 3)
+   (add2sbuf_strconst outbuf "};")
+   (add2sbuf_indentnl outbuf 0)
+   (add2out outbuf "#endif /*MELT_NO_CONVERSION_OPERATOR*/")
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_strconst outbuf "struct GTY (()) ")
+   (add2sbuf_string outbuf (get_field :ctypg_entrystruct curctyp))
+   (add2sbuf_strconst outbuf " { /* for ")
+   (add2sbuf_string outbuf (get_field :ctypg_mapmagic curctyp))
+   (add2sbuf_strconst outbuf "*/")
+   (add2sbuf_indentnl outbuf 3)
+   (add2sbuf_string outbuf (get_field :ctype_cname curctyp))
+   (add2sbuf_strconst outbuf " e_at;")
+   (add2sbuf_indentnl outbuf 3)
+   (add2sbuf_strconst outbuf " melt_ptr_t e_va;")
+   (add2sbuf_strconst outbuf "};")
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_strconst outbuf "struct GTY (()) ")
+   (add2sbuf_string outbuf (get_field :ctypg_mapstruct curctyp))
+   (add2sbuf_strconst outbuf " { /* when ")
+   (add2sbuf_string outbuf (get_field :ctypg_mapmagic curctyp))
+   (add2sbuf_strconst outbuf "*/")
+   (add2sbuf_indentnl outbuf 3)
+   (add2sbuf_strconst outbuf "/* keep in sync with meltmappointers_st */")
+   (add2sbuf_indentnl outbuf 3)
+   (add2sbuf_strconst outbuf "meltobject_ptr_t discr;")
+   (add2sbuf_indentnl outbuf 3)
+   (add2sbuf_strconst outbuf "unsigned count;")
+   (add2sbuf_indentnl outbuf 3)
+   (add2sbuf_strconst outbuf "unsigned char lenix;")
+   (add2sbuf_indentnl outbuf 3)
+   (add2sbuf_strconst outbuf "melt_ptr_t meltmap_aux;")
+   (add2sbuf_indentnl outbuf 3)
+   (add2sbuf_strconst outbuf "struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_entrystruct curctyp))
+   (add2sbuf_strconst outbuf "* GTY ((length (\"melt_primtab[%h.lenix]\"))) entab;")
+   (add2sbuf_indentnl outbuf 3)
+   (add2sbuf_strconst outbuf "};")
+   (add2sbuf_indentnl outbuf 0)
+   )
+  (add2sbuf_indentnl outbuf 0)
+;;;;;;;;;;;
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_strconst outbuf "/* value GTY types */")
+  (foreach_in_multiple
+   (valdesctup)
+   (curvaldesc :long ix)
+   (debug "runtypesupport_gtyvaldesc curvaldesc=" curvaldesc " ix=" ix)
+   (assert_msg "check curvaldesc" (is_a curvaldesc class_value_descriptor) curvaldesc)
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_strconst outbuf "/*gtyvaldesc #")
+   (add2sbuf_longdec outbuf (+i 1 ix))
+   (add2sbuf_strconst outbuf " ")
+   (add2sbuf_ccomstring outbuf (get_field :named_name curvaldesc))
+   (add2sbuf_strconst outbuf "*/")
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_strconst outbuf "struct GTY((")
+   (cond 
+    ( (is_a curvaldesc class_varisized_value_descriptor)
+      (assert_msg "check null valdescgty" 
+		  (null (get_field :valdesc_gty curvaldesc)) curvaldesc)
+      (add2sbuf_strconst outbuf "variable_size")
+      )
+    ( (is_a curvaldesc class_value_descriptor)
+      (let ( (sgty (get_field :valdesc_gty curvaldesc)) 
+	     )
+	(if (is_string sgty)
+	    (add2sbuf_string outbuf sgty))))
+    (:else
+     (assert_msg "invalid value descriptor" () curvaldesc))
+    )
+   (add2sbuf_strconst outbuf ")) ")
+   (add2sbuf_string outbuf (get_field :valdesc_struct curvaldesc))
+   (add2sbuf_strconst outbuf " /* when ")
+   (add2sbuf_string outbuf (get_field :valdesc_objmagic curvaldesc))
+   (add2sbuf_strconst outbuf " */ {")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "meltobject_ptr_t discr;")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_string outbuf (get_field :valdesc_membchunk curvaldesc))
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_strconst outbuf "}; /* end ")
+   (add2sbuf_string outbuf (get_field :valdesc_struct curvaldesc))
+   (add2sbuf_strconst outbuf " */")
+   (add2sbuf_indentnl outbuf 0)
+   (let ( (dclchk (get_field :valdesc_declchunk curvaldesc))
+	  )
+     (if dclchk
+	 (progn
+	   (add2sbuf_strconst outbuf "/* decl. chunk */")
+	   (add2sbuf_indentnl outbuf 0)
+	   (add2sbuf_string outbuf dclchk)
+	   (add2sbuf_indentnl outbuf 0)
+	   )
+       (add2sbuf_strconst outbuf "/* no decl. chunk */")
+       )
+     (add2sbuf_indentnl outbuf 0)
+     )
+   )
+;;; generate the melt_un union
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_strconst outbuf "/* our generated MELT union for everything */")
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_strconst outbuf "typedef union")
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_strconst outbuf 
+		     " GTY ((desc (\"%0.u_discr->meltobj_magic\"))) melt_un")
+    
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_strconst outbuf "{ /*generated melt_un*/")
+  (add2sbuf_indentnl outbuf 1)
+  (add2sbuf_strconst outbuf "meltobject_ptr_t GTY ((skip)) u_discr;")
+  (add2sbuf_indentnl outbuf 1)
+  (add2sbuf_strconst outbuf "struct meltforward_st GTY ((skip)) u_forward;")
+  (add2sbuf_indentnl outbuf 1)
+  ;; gty type unions
+  (foreach_in_multiple
+   (ctygtytup)
+   (curctyp :long ix)
+   (debug "generate_runtypesupport_gty curctyp=" curctyp " ix=" ix)
+   (assert_msg "check curctyp" (is_a curctyp class_ctype_gty) curctyp)
+   (add2sbuf_indentnl outbuf 1)
+   (add2sbuf_strconst outbuf "/*union gtyctype #")
+   (add2sbuf_longdec outbuf (+i 1 ix))
+   (add2sbuf_strconst outbuf " ")
+   (add2sbuf_ccomstring outbuf (get_field :named_name curctyp))
+   (add2sbuf_strconst outbuf "*/")
+   (add2sbuf_indentnl outbuf 1)
+   (add2sbuf_strconst outbuf "struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_boxedstruct curctyp))
+   (add2sbuf_strconst outbuf " GTY ((tag(\"")
+   (add2sbuf_string outbuf (get_field :ctypg_boxedmagic curctyp))
+   (add2sbuf_strconst outbuf "\"))) ")
+   (add2sbuf_string outbuf (get_field :ctypg_boxedunimemb curctyp))
+   (add2sbuf_strconst outbuf "; /* generated boxed union member */")
+   (add2sbuf_indentnl outbuf 1)
+   (add2sbuf_strconst outbuf "struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_mapstruct curctyp))
+   (add2sbuf_strconst outbuf " GTY ((tag(\"")
+   (add2sbuf_string outbuf (get_field :ctypg_mapmagic curctyp))
+   (add2sbuf_strconst outbuf "\"))) ")
+   (add2sbuf_string outbuf (get_field :ctypg_mapunimemb curctyp))
+   (add2sbuf_strconst outbuf "; /* generated map union member */")
+   (add2sbuf_indentnl outbuf 1)
+   )					;end foreach gty ctype
+  (add2sbuf_indentnl outbuf 1)
+  ;; valdesc union
+  (foreach_in_multiple
+   (valdesctup)
+   (curvaldesc :long vix)
+   (debug "generate_runtypesupport_gty curvaldesc=" curvaldesc " vix=" vix)
+   (add2sbuf_indentnl outbuf 1)
+   (add2sbuf_strconst outbuf "/*union.valdesc #")
+   (add2sbuf_longdec outbuf (+i 1 vix))
+   (add2sbuf_strconst outbuf " ")
+   (add2sbuf_ccomstring outbuf (get_field :named_name curvaldesc))
+   (add2sbuf_strconst outbuf "*/")
+   (add2sbuf_indentnl outbuf 1)
+   (add2sbuf_strconst outbuf "struct ")
+   (add2sbuf_string outbuf (get_field :valdesc_struct curvaldesc))
+   (add2sbuf_strconst outbuf " GTY ((tag(\"")
+   (add2sbuf_string outbuf (get_field :valdesc_objmagic curvaldesc))
+   (add2sbuf_strconst outbuf "\"))) ")
+   (add2sbuf_string outbuf (get_field :valdesc_unionmem curvaldesc))
+   (add2sbuf_strconst outbuf "; /* generated value union member */")
+   (add2sbuf_indentnl outbuf 1)
+   )					;end foreach valdesc
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_strconst outbuf "} melt_un_t /*end generated melt_un*/;")
+  (add2sbuf_indentnl outbuf 0)
+  ;; generate the casts and the conversion operators
+  (foreach_in_multiple
+   (valdesctup)
+   (curvaldesc :long vix)
+   (debug "generate_runtypesupport_gty cast curvaldesc=" curvaldesc " vix=" vix)
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_indentnl outbuf 0)
+   (add2out outbuf "/* cast.valdesc #" (+i 1 vix) " " (get_field :valdesc_struct curvaldesc) "*/")
+   (add2sbuf_indentnl outbuf 0)
+   (add2out outbuf "static inline struct " (get_field :valdesc_struct curvaldesc) "* " 
+	    "meltcast_" (get_field :valdesc_struct curvaldesc) "(melt_ptr_t p) {")
+   (add2sbuf_indentnl outbuf 1)
+   (add2out outbuf "if (p && melt_magic_discr(p) == " (get_field :valdesc_objmagic curvaldesc) ")")
+   (add2sbuf_indentnl outbuf 2)
+   (add2out outbuf "return (struct " (get_field :valdesc_struct curvaldesc) "*) p;")
+   (add2sbuf_indentnl outbuf 1)
+   (add2out outbuf "return NULL;")
+   (add2sbuf_indentnl outbuf 0)
+   (add2out outbuf "} /* end meltcast_" (get_field :valdesc_struct curvaldesc) "*/")
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_indentnl outbuf 0)
+   )					;end foreach valdesc
+  (add2sbuf_indentnl outbuf 0)
+   
+;;;
+  (add2sbuf_strconst outbuf "/** end generated by generate_runtypesupport_gty **/")
+;;;;
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_indentnl outbuf 0)
+  (debug "generate_runtypesupport_gty end outarg=" outarg)
+  )
+  
+;;;;;;;;;;;;;;;;
+
+
+
+
+;; internal function to generate the forwarding copy function
+(defun generate_runtypesupport_forwcopy_fun (ctygtytup
+					     valdesctup
+					     outname
+					     outbuf)
+  (debug "generate_runtypesupport_forwcopy_fun start outname=" outname)
+  (assert_msg "check valdesctup" (is_multiple valdesctup) valdesctup)
+  (assert_msg "check ctygtytup" (is_multiple ctygtytup) ctygtytup)
+  (assert_msg "check outbuf" (is_strbuf outbuf) outbuf)
+  (strbuf_reserve outbuf 65000)
+;;;;;;;;;;;;;;;;
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_strconst outbuf "/** generated by generate_runtypesupport_forwcopy_fun **/")
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_string outbuf #{$'
+/* cheney like forwarding generated function */
+melt_ptr_t 
+melt_forwarded_copy (melt_ptr_t p)
+{ /* header generated by generate_runtypesupport_forwcopy_fun */
+  melt_ptr_t n = 0;
+  int mag = 0;
+  gcc_assert (melt_is_young (p));
+  gcc_assert (p->u_discr && p->u_discr != MELT_FORWARDED_DISCR);
+  if (p->u_discr->meltobj_class == MELT_FORWARDED_DISCR)
+    mag =
+      ((meltobject_ptr_t)
+       (((struct meltforward_st *) p->u_discr)->forward))->meltobj_magic;
+  else
+    mag = p->u_discr->meltobj_magic;
+  melt_forward_counter++;
+  switch (mag) { /* end of generated header */
+}#)
+  (add2sbuf_indentnl outbuf 1)
+  (add2sbuf_strconst 
+   outbuf
+   "/* value descriptor forward copy for melt_forwarded_copy  */")
+  (add2sbuf_indentnl outbuf 0)
+  (foreach_in_multiple
+   (valdesctup)
+   (curvaldesc :long vix)
+   (debug "runtypesupport_forwcopy curvaldesc=" curvaldesc)
+   (assert_msg "check curvaldesc" (is_a curvaldesc class_value_descriptor) curvaldesc)
+   (add2sbuf_indentnl outbuf 1)
+   (add2sbuf_strconst outbuf "/*valdesc #")
+   (add2sbuf_longdec outbuf (+i 1 vix))
+   (add2sbuf_strconst outbuf " ")
+   (add2sbuf_ccomstring outbuf (get_field :named_name curvaldesc))
+   (add2sbuf_strconst outbuf "*/")
+   (add2sbuf_indentnl outbuf 1)
+   (add2sbuf_strconst outbuf "case ")
+   (add2sbuf_string outbuf (get_field :valdesc_objmagic curvaldesc))
+   (add2sbuf_strconst outbuf ": {")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "struct ")
+   (add2sbuf_string outbuf (get_field :valdesc_struct curvaldesc))
+   (add2sbuf_strconst outbuf "*src = (struct ")
+   (add2sbuf_string outbuf (get_field :valdesc_struct curvaldesc))
+   (add2sbuf_strconst outbuf "*) p;")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "struct ")
+   (add2sbuf_string outbuf (get_field :valdesc_struct curvaldesc))
+   (add2sbuf_strconst outbuf "*dst = NULL;")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_string outbuf (get_field :valdesc_copychunk curvaldesc))
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "n = (melt_ptr_t) dst;")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "break; }")
+   (add2sbuf_indentnl outbuf 1)
+   )
+;;;;;;;;;;;;;;;;
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_strconst outbuf "/* gty ctype forward copy for melt_forwarded_copy */")
+  (add2sbuf_indentnl outbuf 0)
+  (foreach_in_multiple
+   (ctygtytup)
+   (curctyp :long tix)
+   (debug "runtypesupport_forwcopy curctyp=" curctyp)
+   (assert_msg "check curctyp" (is_a curctyp class_ctype_gty) curctyp)
+   (add2sbuf_strconst outbuf "/*forwcopy gtyctype #")
+   (add2sbuf_longdec outbuf (+i 1 tix))
+   (add2sbuf_strconst outbuf " ")
+   (add2sbuf_ccomstring outbuf (get_field :named_name curctyp))
+   (add2sbuf_strconst outbuf "*/")
+   (add2sbuf_indentnl outbuf 1)
+;;; the boxed ctype forward copying case
+   (add2sbuf_strconst outbuf "case ")
+   (add2sbuf_string outbuf (get_field :ctypg_boxedmagic curctyp))
+   (add2sbuf_strconst outbuf ": {")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "/* macro ggc_alloc_")
+   (add2sbuf_string outbuf (get_field :ctypg_boxedstruct curctyp))
+   (add2sbuf_strconst outbuf " should be generated by gengtype not by runtypesupport_forwcopy */")
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_strconst outbuf "#ifndef ggc_alloc_")
+   (add2sbuf_string outbuf (get_field :ctypg_boxedstruct curctyp))
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_strconst outbuf "#define ggc_alloc_")
+   (add2sbuf_string outbuf (get_field :ctypg_boxedstruct curctyp))
+   (add2sbuf_strconst outbuf "() ((struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_boxedstruct curctyp))
+   (add2sbuf_strconst outbuf "*)(ggc_internal_alloc_stat (sizeof (struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_boxedstruct curctyp))
+   (add2sbuf_strconst outbuf ") MEM_STAT_INFO)))")
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_strconst outbuf "#endif")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_boxedstruct curctyp))
+   (add2sbuf_strconst outbuf " *src = (struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_boxedstruct curctyp))
+   (add2sbuf_strconst outbuf "*) p;")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_boxedstruct curctyp))
+   (add2sbuf_strconst outbuf " *dst = ggc_alloc_")
+   (add2sbuf_string outbuf (get_field :ctypg_boxedstruct curctyp))
+   (add2sbuf_strconst outbuf " ();")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf " *dst = *src;")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf " n = (melt_ptr_t) dst;")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "break; }")
+   (add2sbuf_indentnl outbuf 1)
+;;; the map ctype forward copying case
+   (add2sbuf_strconst outbuf "case ")
+   (add2sbuf_string outbuf (get_field :ctypg_mapmagic curctyp))
+   (add2sbuf_strconst outbuf ": {")
+   ;;
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_strconst outbuf "/* ggc_alloc_")
+   (add2sbuf_string outbuf (get_field :ctypg_mapstruct curctyp))
+   (add2sbuf_strconst outbuf " should be generated by gengtype not by runtypesupport_forwcopy */")
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_strconst outbuf "#ifndef ggc_alloc_")
+   (add2sbuf_string outbuf (get_field :ctypg_mapstruct curctyp))
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_strconst outbuf "#define ggc_alloc_")
+   (add2sbuf_string outbuf (get_field :ctypg_mapstruct curctyp))
+   (add2sbuf_strconst outbuf "() ((struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_mapstruct curctyp))
+   (add2sbuf_strconst outbuf "*) (ggc_internal_alloc_stat (sizeof (struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_mapstruct curctyp))
+   (add2sbuf_strconst outbuf ") MEM_STAT_INFO))) ")
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_strconst outbuf "#endif")
+   ;;
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_strconst outbuf "/* ggc_alloc_vec_")
+   (add2sbuf_string outbuf (get_field :ctypg_entrystruct curctyp))
+   (add2sbuf_strconst outbuf " should be generated by gengtype not by runtypesupport_forwcopy */")
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_strconst outbuf "#ifndef ggc_alloc_vec_")
+   (add2sbuf_string outbuf (get_field :ctypg_entrystruct curctyp))
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_strconst outbuf "#define ggc_alloc_vec_")
+   (add2sbuf_string outbuf (get_field :ctypg_entrystruct curctyp))
+   (add2sbuf_strconst outbuf "(n) ((struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_entrystruct curctyp))
+   (add2sbuf_strconst outbuf "*) (ggc_internal_vec_alloc_stat (sizeof (struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_entrystruct curctyp))
+   (add2sbuf_strconst outbuf "), n MEM_STAT_INFO))) ")
+   (add2sbuf_indentnl outbuf 0)
+   (add2sbuf_strconst outbuf "#endif")
+   ;;
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_mapstruct curctyp))
+   (add2sbuf_strconst outbuf " *src = (struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_mapstruct curctyp))
+   (add2sbuf_strconst outbuf "*) p;")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "int siz = melt_primtab[src->lenix];")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_mapstruct curctyp))
+   (add2sbuf_strconst outbuf " *dst = ggc_alloc_")
+   (add2sbuf_string outbuf (get_field :ctypg_mapstruct curctyp))
+   (add2sbuf_strconst outbuf " ();")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "dst->discr = src->discr;")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "dst->count = src->count;")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "dst->lenix = src->lenix;")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "dst->meltmap_aux = src->meltmap_aux;")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "if (siz > 0 && src->entab) {")
+   (add2sbuf_indentnl outbuf 3)
+   (add2sbuf_strconst outbuf "dst->entab = ggc_alloc_vec_")
+   (add2sbuf_string outbuf (get_field :ctypg_entrystruct curctyp))
+   (add2sbuf_strconst outbuf " (siz);")
+   (add2sbuf_indentnl outbuf 3)
+   (add2sbuf_strconst outbuf "memcpy (dst->entab, src->entab, siz * sizeof (dst->entab[0]));")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "} else dst->entab = NULL;")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf " n = (melt_ptr_t) dst;")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "break; }")
+   (add2sbuf_indentnl outbuf 1)
+   )
+  ;;
+  ;;-----------
+  (add2sbuf_string outbuf #{$' /* trailer generated by generate_runtypesupport_forwcopy_fun  */
+    default:
+      fatal_error ("MELT corruption: forward invalid p=%p discr=%p magic=%d [%s]",
+		   (void *) p, (void *) p->u_discr, mag, melt_obmag_string (mag));
+   } /* end switch (mag) */
+
+    melt_debuggc_eprintf ("melt_forwarded_copy#%ld/%04ld %p => %p %s", 
+			  melt_nb_garbcoll, melt_forward_counter, (void*)p, 
+                          (void*)n, melt_obmag_string (mag));
+  if (n)
+    {
+#if ENABLE_CHECKING
+      if (melt_alptr_1 && (void*)melt_alptr_1 == (void*)n) 
+	{
+	  fprintf (stderr, "melt_forwarded_copy to alptr_1 %p mag %d\n",  melt_alptr_1, mag);
+	  fflush (stderr);
+	  melt_debuggc_eprintf("melt_forwarded_copy #%ld alptr_1 %p mag %d", 
+			       melt_nb_garbcoll, melt_alptr_1, mag);
+	  melt_break_alptr_1 ("forwarded copy to alptr_1");
+	}
+      if (melt_alptr_2 && (void*)melt_alptr_2 == (void*)n) 
+	{
+	  fprintf (stderr, "melt_forwarded_copy to alptr_2 %p mag %d\n",  melt_alptr_2, mag);
+	  fflush (stderr);
+	  melt_debuggc_eprintf("melt_forwarded_copy #%ld alptr_2 %p", 
+			       melt_nb_garbcoll, melt_alptr_2);
+	  melt_break_alptr_2 ("forwarded copy to alptr_2");
+	};
+#endif /*ENABLE_CHECKING*/
+
+      p->u_forward.discr = MELT_FORWARDED_DISCR;
+      p->u_forward.forward = n;
+
+      gcc_assert (melt_scangcvect != NULL);
+      {
+	unsigned long ulen = melt_scangcvect->vv_ulen;
+	if (MELT_UNLIKELY(ulen + 3 < melt_scangcvect->vv_size)) {
+	  unsigned long newsiz = (ulen + ulen/4 + 100);
+	  melt_resize_scangcvect (newsiz);
+	}
+	melt_scangcvect->vv_tab[ulen] = n;
+	melt_scangcvect->vv_ulen = ulen+1;
+      }
+
+    }
+  return n;
+}  /* end of melt_forwarded_copy generated by generate_runtypesupport_forwcopy_fun */
+}#)
+  ;;-----------
+  ;;
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_strconst outbuf "/** end of code generated by generate_runtypesupport_forwcopy_fun **/")
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_indentnl outbuf 0)
+  )
+  
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; internal function to generate the cloning function
+(defun generate_runtypesupport_cloning_fun (ctygtytup
+					     valdesctup
+					     outname
+					     outbuf)
+  (debug "generate_runtypesupport_cloning_fun start outname=" outname)
+  (assert_msg "check valdesctup" (is_multiple valdesctup) valdesctup)
+  (assert_msg "check ctygtytup" (is_multiple ctygtytup) ctygtytup)
+  (assert_msg "check outbuf" (is_strbuf outbuf))
+  (strbuf_reserve outbuf 65000)
+;;;;;;;;;;;;;;;;
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_strconst outbuf "/** generated by generate_runtypesupport_cloning_fun **/")
+  (add2sbuf_indentnl outbuf 0)
+  ;;; generate the header of cloning 
+  (add2out outbuf ##{ /* generated cloning routine head */
+melt_ptr_t
+meltgc_clone_with_discriminant (melt_ptr_t srcval_p, melt_ptr_t newdiscr_p)
+{
+  unsigned srcmagic = 0;
+  unsigned newmagic = 0;
+  MELT_ENTERFRAME (5, NULL);
+#define resv       meltfram__.mcfr_varptr[0]
+#define srcvalv    meltfram__.mcfr_varptr[1]
+#define newdiscrv  meltfram__.mcfr_varptr[2]
+#define srcdiscrv  meltfram__.mcfr_varptr[3]
+#define compv      meltfram__.mcfr_varptr[4]
+  srcvalv = srcval_p;
+  newdiscrv = newdiscr_p;
+  resv = srcvalv;
+  if (!srcvalv) 
+     goto end;
+  srcdiscrv = (melt_ptr_t) (((melt_ptr_t)srcvalv)->u_discr);
+  if (!newdiscrv)
+    newdiscrv = srcdiscrv;
+  if (melt_magic_discr((melt_ptr_t)newdiscrv) != MELTOBMAG_OBJECT
+      || ((meltobject_ptr_t)newdiscrv)->obj_len < MELTLENGTH_CLASS_DISCRIMINANT)
+    goto end;
+  if (!melt_is_instance_of((melt_ptr_t)newdiscrv, 
+			   MELT_PREDEF (CLASS_DISCRIMINANT)))
+    goto end;
+  srcmagic = melt_magic_discr ((melt_ptr_t)srcvalv);
+  newmagic = ((meltobject_ptr_t)newdiscrv)->meltobj_magic;
+  if (srcmagic != newmagic) 
+    goto end;
+  switch (srcmagic) { /* end cloning heeader */
+}#)
+  ;;;; generate the cloning cases
+  (add2sbuf_indentnl outbuf 0)
+  ;;
+  ;; cloning the GTY-ed ctypes
+  (let ( (:long nbctygtytup (multiple_length ctygtytup)) 
+	 )
+    (add2sbuf_indentnl outbuf 0)
+    (add2out outbuf ##{/*** cloning $NBCTYGTYTUP GTY-ed ctypes ***/}#)
+    (add2sbuf_indentnl outbuf 0)
+  ;; cloning boxed values
+  (foreach_in_multiple
+   (ctygtytup)
+   (curctyp :long tix)
+   (debug "runtypesupport_cloning curctyp=" curctyp " tix=" tix)
+   (assert_msg "check curctygty" (is_a curctyp class_ctype_gty) curctyp)
+   (let ( (ctypname  (get_field :named_name curctyp))
+	  (:long tixsucc (+i 1 tix))
+	  (tycname (get_field :ctype_cname curctyp))
+	  (mapmagic (get_field :ctypg_mapmagic curctyp))
+	  (boxmagic (get_field :ctypg_boxedmagic curctyp))
+	  (boxstruct (get_field :ctypg_boxedstruct curctyp))
+	  (mapstruct (get_field :ctypg_mapstruct curctyp))
+	  (entrystruct (get_field :ctypg_entrystruct curctyp))
+	  )
+     (add2sbuf_indentnl outbuf 1)
+     (add2out outbuf ##{/*cloning gtyctype #$TIXSUCC $CTYPNAME */}#)
+     (add2sbuf_indentnl outbuf 1)
+     (add2out outbuf ##{case $BOXMAGIC : { /* cloning boxed value $CTYPNAME */
+	  struct $BOXSTRUCT *src = (struct $BOXSTRUCT *) srcvalv;
+	  struct $BOXSTRUCT *dst = (struct $BOXSTRUCT *) meltgc_allocate (sizeof(struct $BOXSTRUCT), 0);}#
+	  )
+     (add2sbuf_indentnl outbuf 1)
+     (add2out outbuf ##{
+            *dst = *src;
+	    dst->discr = (meltobject_ptr_t) newdiscrv; 
+	    resv = (melt_ptr_t) dst;
+          }
+	  break;}#
+	  )
+   (add2sbuf_indentnl outbuf 2)
+   (if (and mapstruct entrystruct mapmagic)
+       (let (
+	     )
+     (add2out outbuf ##{case $MAPMAGIC : { /* cloning map value $CTYPNAME */
+	  struct $MAPSTRUCT *src = (struct $MAPSTRUCT *) srcvalv;
+	  unsigned oldlen =  melt_primtab[src->lenix];
+	  unsigned newlen = 4*src->count/3 + 5;
+	  struct $MAPSTRUCT *dst = 
+            (struct $MAPSTRUCT *) meltgc_raw_new_mappointers((meltobject_ptr_t)newdiscrv, newlen);
+	  unsigned ix = 0;
+	  dst->meltmap_aux = src->meltmap_aux;
+	  if (src->entab)
+            for (ix=0; ix<oldlen; 
+		 ix++) {
+	       melt_ptr_t curva = src->entab[ix].e_va;
+	       $TYCNAME curat = src->entab[ix].e_at;
+	       if (curva != NULL && curat != ($TYCNAME) HTAB_DELETED_ENTRY)
+	         meltgc_raw_put_mappointers((void*)dst, (const void*)curat, curva);
+	    }
+	  resv = (melt_ptr_t) dst;
+         };
+         break; }#
+	 )
+	 ))
+   ))				      ;end foreach_in_multiple ctygtytup cloning
+  )
+  ;;;
+  ;;; cloning the value descriptors
+  (let ( (:long nbvaldesc (multiple_length valdesctup))
+	 )
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_indentnl outbuf 0)
+    (add2out outbuf ##{/******* cloning the $NBVALDESC value descriptors *******/}#)
+    (foreach_in_multiple
+     (valdesctup)
+     (curvaldesc :long valdix)
+     (add2sbuf_indentnl outbuf 0)
+     (let ( (namvaldesc (get_field :named_name curvaldesc))
+	    (clonevalchk (get_field :valdesc_clonechunk curvaldesc))
+	    (valstruct (get_field :valdesc_struct curvaldesc))
+	    (valobjmagic (get_field :valdesc_objmagic curvaldesc))
+	    (:long valdixsucc (+i 1 valdix))
+	   )
+       (add2out outbuf ##{/** cloning value descriptor #$VALDIXSUCC $NAMVALDESC **/}#)
+       (add2sbuf_indentnl outbuf 1)
+       (cond 
+	( (== clonevalchk :true)
+	  (add2out outbuf 
+		   ##{ /*default cloning for $NAMVALDESC*/
+		   case $VALOBJMAGIC: {
+		     struct $VALSTRUCT *src = (struct $VALSTRUCT*) srcvalv;
+		     struct $VALSTRUCT *dst = 
+                        (struct $VALSTRUCT*) meltgc_allocate (sizeof(struct $VALSTRUCT), 0);
+		     *dst = *src;
+		     dst->discr = (meltobject_ptr_t)newdiscrv;
+		     resv = (melt_ptr_t) dst;
+		   }
+		   break; }#
+		     ))
+	( (is_string clonevalchk)
+	  (add2out outbuf 
+		   ##{ /*explicit cloning for $NAMVALDESC*/
+		   case $VALOBJMAGIC: {
+		     struct $VALSTRUCT *src = (struct $VALSTRUCT*) srcvalv;
+		     struct $VALSTRUCT *dst = NULL;
+		     /* clone chunk for $NAMVALDESC:*/
+		     $CLONEVALCHK;
+		     if (dst) 
+		        resv = (melt_ptr_t) dst;
+		   };
+		   break;}#
+		   )
+	  )
+	( (null clonevalchk)
+	  (add2out outbuf
+		   ##{ /*no cloning for $NAMVALDESC*/
+		   case $VALOBJMAGIC: break;}#
+		   ))
+	(:else
+	 (debug "invalid cloning in curvaldesc=" curvaldesc " valdix=" valdix)
+	 (errormsg_strv "invalid cloning for " namvaldesc)
+	 )
+	)
+       )
+     );; end foreach_in_multiple valdesctup cloning
+    (add2sbuf_indentnl outbuf 0)
+    )
+  ;;; 
+  ;;; generate the cloning trailer
+  (add2out outbuf ##{
+/* generated cloning routine trailer */
+    default: ;
+  } /*end switch srcmagic for cloning */
+ end:
+  MELT_EXITFRAME();
+  return (melt_ptr_t) resv;
+}  /* end of generated meltgc_clone_with_discriminant */
+#undef resv
+#undef srcvalv
+#undef newdiscrv
+#undef discrv
+#undef compv
+}#)
+  (add2sbuf_indentnl outbuf 0)
+)
+
+
+
+;; internal function to generate melt_scanning function
+(defun generate_runtypesupport_scanning (ctygtytup valdesctup outname outbuf)
+  (debug "generate_runtypesupport_scanning start outname=" outname)
+;;;;;;;;;;;;;;;;
+  (assert_msg "check ctygtytup" (is_multiple ctygtytup) ctygtytup)
+  (assert_msg "check valdesctup" (is_multiple valdesctup) valdesctup)
+  (assert_msg "check outbuf" (is_strbuf outbuf) outbuf)
+  (strbuf_reserve outbuf 65000)
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_strconst outbuf 
+		     "/** start of code generated by generate_runtypesupport_scanning **/")
+  (add2sbuf_indentnl outbuf 0)
+;;;;;;;;;;;;;;;;
+  (add2sbuf_string outbuf
+#{$' /* header from generate_runtypesupport_scanning */
+/* The melt_scanning routine is mostly Chesney like ; however some types,
+   including objects, strbuf, stringmaps, objectmaps, all the other
+   *maps, contain a pointer to a non value ; this pointer should be
+   carefully updated if it was young. */
+static void
+melt_scanning (melt_ptr_t p)
+{
+  unsigned omagic = 0;
+  if (!p)
+    return;
+  gcc_assert (p != (void *) HTAB_DELETED_ENTRY);
+  gcc_assert (p->u_discr && p->u_discr != (meltobject_ptr_t) 1);
+  MELT_FORWARDED (p->u_discr);
+  gcc_assert (!melt_is_young (p));
+  omagic = p->u_discr->meltobj_magic;
+  switch (omagic)
+    {
+/* end of header from generate_runtypesupport_scanning*/}#)
+;;;;;;;;;;;;;;;;
+  (add2sbuf_indentnl outbuf 0)
+  (foreach_in_multiple
+   (valdesctup)
+   (curvaldesc :long vix)
+   (debug "generate_runtypesupport_scanning curvaldesc=" curvaldesc)
+   (assert_msg "check curvaldesc" (is_a curvaldesc class_value_descriptor) curvaldesc)
+   (add2sbuf_indentnl outbuf 1)
+   (add2sbuf_strconst outbuf "/*valdesc #")
+   (add2sbuf_longdec outbuf (+i 1 vix))
+   (add2sbuf_strconst outbuf " ")
+   (add2sbuf_ccomstring outbuf (get_field :named_name curvaldesc))
+   (add2sbuf_strconst outbuf "*/")
+   (add2sbuf_indentnl outbuf 1)
+   (add2sbuf_strconst outbuf "case ")
+   (add2sbuf_string outbuf (get_field :valdesc_objmagic curvaldesc))
+   (add2sbuf_strconst outbuf ": {")
+   (let ( (fwchk (get_field :valdesc_forwchunk curvaldesc))
+	  )
+     (if fwchk 
+	 (progn
+	   (add2sbuf_indentnl outbuf 2)
+	   (add2sbuf_strconst outbuf "struct ")
+	   (add2sbuf_string outbuf (get_field :valdesc_struct curvaldesc))
+	   (add2sbuf_strconst outbuf "*src = (struct ")
+	   (add2sbuf_string outbuf (get_field :valdesc_struct curvaldesc))
+	   (add2sbuf_strconst outbuf "*) p;")
+	   (add2sbuf_indentnl outbuf 2)
+	   (add2sbuf_string outbuf fwchk)
+	   )))
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "break; }")
+   (add2sbuf_indentnl outbuf 1)
+   )
+;;;
+;;;; forward scan for GTY-ed ctypes
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_strconst 
+   outbuf
+   "/* GTY-ed ctypes scan forward for melt_scanning  */")
+  (add2sbuf_indentnl outbuf 0)
+  (foreach_in_multiple
+   (ctygtytup)
+   (curctyp :long tix)
+   (debug "generate_runtypesupport_scanning curctyp=" curctyp)
+   (add2sbuf_strconst outbuf "/*gtyctype #")
+   (add2sbuf_longdec outbuf (+i 1 tix))
+   (add2sbuf_strconst outbuf " ")
+   (add2sbuf_ccomstring outbuf (get_field :named_name curctyp))
+   (add2sbuf_strconst outbuf "*/")
+   (add2sbuf_indentnl outbuf 1)
+;;; the boxed ctype case
+   (add2sbuf_strconst outbuf "case ")
+   (add2sbuf_string outbuf (get_field :ctypg_boxedmagic curctyp))
+   (add2sbuf_strconst outbuf ":")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "break;")
+   (add2sbuf_indentnl outbuf 1)
+;;; the map ctype case
+   (add2sbuf_strconst outbuf "case ")
+   (add2sbuf_string outbuf (get_field :ctypg_mapmagic curctyp))
+   (add2sbuf_strconst outbuf ": {")
+   (add2sbuf_indentnl outbuf 3)
+   (add2sbuf_strconst outbuf "struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_mapstruct curctyp))
+   (add2sbuf_strconst outbuf " *src = (struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_mapstruct curctyp))
+   (add2sbuf_strconst outbuf "*) p;")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "int siz=0, ix=0;")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "MELT_FORWARDED(src->meltmap_aux);")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "if (!src->entab) break;")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "siz = melt_primtab[src->lenix];")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "gcc_assert (siz>0);")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "if (melt_is_young (src->entab)) {")
+   (add2sbuf_indentnl outbuf 4)
+   (add2sbuf_strconst outbuf "struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_entrystruct curctyp))
+   (add2sbuf_strconst outbuf "* newtab = ggc_alloc_vec_")
+   (add2sbuf_string outbuf (get_field :ctypg_entrystruct curctyp))
+   (add2sbuf_strconst outbuf " (siz);")
+   (add2sbuf_indentnl outbuf 4)
+   (add2sbuf_strconst outbuf "memcpy (newtab, src->entab, siz * sizeof (struct ")
+   (add2sbuf_string outbuf (get_field :ctypg_entrystruct curctyp))
+   (add2sbuf_strconst outbuf "));")
+   (add2sbuf_indentnl outbuf 4)
+   (add2sbuf_strconst outbuf "src->entab = newtab;")
+   (add2sbuf_indentnl outbuf 4)
+   (add2sbuf_strconst outbuf "} /*end if young entab */")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "for (ix = 0; ix < siz; ix++) {")
+   (add2sbuf_indentnl outbuf 4)
+   (add2sbuf_string outbuf (get_field :ctype_cname curctyp))
+   (add2sbuf_strconst outbuf " at = src->entab[ix].e_at;")
+   (add2sbuf_indentnl outbuf 4)
+   (add2sbuf_strconst outbuf "if (!at || (void*) at == (void*) HTAB_DELETED_ENTRY) {")
+   (add2sbuf_indentnl outbuf 6)
+   (add2sbuf_strconst outbuf "src->entab[ix].e_va = NULL;")
+   (add2sbuf_indentnl outbuf 6)
+   (add2sbuf_strconst outbuf "continue;")
+   (add2sbuf_indentnl outbuf 4)
+   (add2sbuf_strconst outbuf "} /*end if empty at */")
+   (add2sbuf_indentnl outbuf 4)
+   (add2sbuf_strconst outbuf "MELT_FORWARDED (src->entab[ix].e_va);")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "} /*end for ix*/")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "};    /* end case ")
+   (add2sbuf_string outbuf (get_field :ctypg_mapmagic curctyp))
+   (add2sbuf_strconst outbuf " */")
+   (add2sbuf_indentnl outbuf 2)
+   (add2sbuf_strconst outbuf "break;")
+   (add2sbuf_indentnl outbuf 2)
+   )					;end foreach ctypgty
+  ;;;;
+   (add2sbuf_string outbuf #{$' /* trailer generated by generate_runtypesupport_scanning */
+    default:
+      /* gcc_unreachable (); */
+      fatal_error ("melt melt_scanning GC: corrupted heap, p=%p omagic=%d\n",
+		   (void *) p, (int) omagic);
+    }
+} /* end of melt_scanning generated by generate_runtypesupport_scanning */
+   }#)
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_strconst outbuf 
+		     "/**end of code generated by generate_runtypesupport_scanning **/")
+  (add2sbuf_indentnl outbuf 0)
+;;;;
+  )
+  
+
+
+
+;; internal function to generate parameter passing support
+(defun generate_runtypesupport_param (ctytup valdesctup outname outbuf)
+  (debug "generate_runtypesupport_param start outname=" outname)
+  (assert_msg "check ctytup" (is_multiple ctytup) ctytup)
+  (assert_msg "check valdesctup" (is_multiple valdesctup) valdesctup)
+  (assert_msg "check outbuf" (is_strbuf outbuf) outbuf)
+  (strbuf_reserve outbuf 65000)
+  (let 
+      ( 
+       (:long numdelta 1)
+       (:long lastnum 0)
+       )
+;;;;;;;;;;;;;;;;
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_strconst outbuf 
+		       "/** start of code generated by generate_runtypesupport_param **/")
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_strconst 
+     outbuf
+     "/* support for MELT parameter passing*/")
+    (add2sbuf_indentnl outbuf 0)
+    ;; emit the enumeration for parameter types
+    (add2sbuf_strconst outbuf "enum /* generated enumeration for MELT parameters */ {")
+    (add2sbuf_indentnl outbuf 1)
+    (add2sbuf_strconst outbuf "MELTBPAR__NONE=0,")
+    (add2sbuf_indentnl outbuf 1)
+    (foreach_in_multiple
+     (ctytup)
+     (curctyp :long tix)
+     (debug "runtypesupport_param curctyp=" curctyp)
+     (add2sbuf_strconst outbuf "/*gtyctype #")
+     (add2sbuf_longdec outbuf (+i 1 tix))
+     (add2sbuf_strconst outbuf " ")
+     (add2sbuf_ccomstring outbuf (get_field :named_name curctyp))
+     (add2sbuf_strconst outbuf "*/")
+     (add2sbuf_indentnl outbuf 1)
+     (let ( (ctypchar  (get_field :ctype_parchar curctyp))
+	    (ctypstr (get_field :ctype_parstring curctyp))
+	    )
+       ;; emit the :ctype_parchar
+       (cond
+	( ctypchar
+	  (add2sbuf_string outbuf ctypchar)
+	  (add2sbuf_strconst outbuf "   /*=")
+	  (add2sbuf_longdec outbuf (+i numdelta tix))
+	  (setq lastnum (+i numdelta tix))
+	  (add2sbuf_strconst outbuf "*/,")
+	  )
+	(:else
+	 (add2sbuf_strconst outbuf "   /*-- non parameter --*/")))
+       (add2sbuf_indentnl outbuf 0)
+       ;; emit the :ctype_parstring
+       (cond
+	(ctypstr
+	 (add2sbuf_strconst outbuf "#define ")
+	 (add2sbuf_string outbuf ctypstr)
+	 (add2sbuf_strconst outbuf "  \"\\x")
+	 (add2sbuf_longhex outbuf  (+i numdelta tix))
+	 (add2sbuf_strconst outbuf "\"")
+	 (setq lastnum (+i numdelta tix))	 )
+	(:else
+	 (add2sbuf_strconst outbuf "   /*-- non paramstr --*/")))	 
+       (add2sbuf_indentnl outbuf 0)
+       (add2sbuf_indentnl outbuf 1)
+       )
+     ;; the test below should be changed when argument desciptors for
+     ;; melt_apply will no more be character strings.  See comment
+     ;; around melt_apply and keep code in sync with it.
+     (let ((:long argdescrmax 0))
+       (code_chunk setargdescrmax #{/*$SETARGDESCRMAX*/ 
+		   $ARGDESCRMAX = MELT_ARGDESCR_MAX ;}#
+		   )
+       (cond 
+	((>i lastnum (-i argdescrmax 10))
+	 (errormsg_plain 
+	  "too many ctypes for generated enum with MELTBPAR* w.r.t. MELT_ARGDESCR_MAX")
+	 (assert_msg "exhausted number of ctypes w.r.t MELT_ARGDESCR_MAX"
+		     (<i lastnum (-i argdescrmax 2)) lastnum))
+	((>i lastnum (-i argdescrmax 20))
+	 (warningmsg_plain 
+	  "the number of ctypes is dangerously near MELT_ARGDESCR_MAX"))
+	)
+       )
+     )
+    (add2sbuf_strconst outbuf " MELTBPAR__LAST}; /*end enum for MELT parameters*/")
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_indentnl outbuf 0)
+    ;; emit the union for parameters
+    (add2sbuf_strconst outbuf "union meltparam_un /* generated union for MELT parameters */ {")
+    (add2sbuf_indentnl outbuf 1)
+    (add2sbuf_strconst outbuf "void* meltbp_any;")
+    (add2sbuf_indentnl outbuf 1)
+    (foreach_in_multiple
+     (ctytup)
+     (curctyp :long tix)
+     (debug "runtypesupport_param curctyp=" curctyp)
+     (add2sbuf_indentnl outbuf 1)
+     (add2sbuf_strconst outbuf "/*ctype #")
+     (add2sbuf_longdec outbuf (+i 1 tix))
+     (add2sbuf_strconst outbuf " ")
+     (add2sbuf_ccomstring outbuf (get_field :named_name curctyp))
+     (add2sbuf_strconst outbuf "*/")
+     (add2sbuf_indentnl outbuf 1)
+     (let (  (argtyp (get_field :ctype_argfield curctyp))
+	     (restyp (get_field :ctype_resfield curctyp))
+	     )
+       (cond
+	(argtyp
+	 (add2sbuf_string outbuf (get_field :ctype_cname curctyp))
+	 (add2sbuf_strconst outbuf " ")
+	 (add2sbuf_string outbuf argtyp)
+	 (add2sbuf_strconst outbuf "; /*argument param.*/")
+	 )
+	(:else
+	 (add2sbuf_strconst outbuf "/* no argument */")
+	 ))
+       (add2sbuf_indentnl outbuf 1)
+;;;;
+       (cond
+	(restyp
+	 (add2sbuf_indentnl outbuf 1)
+	 (add2sbuf_string outbuf (get_field :ctype_cname curctyp))
+	 (add2sbuf_strconst outbuf " *")
+	 (add2sbuf_string outbuf restyp)
+	 (add2sbuf_strconst outbuf "; /*result param.*/")     
+	 )
+	(:else
+	 (add2sbuf_indentnl outbuf 1)
+	 (add2sbuf_strconst outbuf "/*no result*/")
+	 )))
+     )					;end foreach_in_multiple
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_strconst outbuf "}; /* end generated union for MELT parameters */")
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_strconst outbuf 
+		       "/** end of code generated by generate_runtypesupport_param **/")
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_indentnl outbuf 0)
+    )
+  )
+
+;; internal function to generate the melt_code2ctype function
+(defun generate_runtypesupport_cod2ctype  (ctytup valdesctup outname outbuf)
+  (debug "generate_runtypesupport_param start outname=" outname)
+  (assert_msg "check ctytup" (is_multiple ctytup) ctytup)
+  (assert_msg "check valdesctup" (is_multiple valdesctup) valdesctup)
+  (assert_msg "check outbuf" (is_strbuf outbuf) outbuf)
+  (strbuf_reserve outbuf 65000)
+  (let 
+      ( 
+       (:long numdelta 1)
+       (:long lastnum 0)
+       )
+;;;;;;;;;;;;;;;;
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_indentnl outbuf 0)
+    (add2out_strconst outbuf "/* start of code generated by generate_runtypesupport_cod2ctype */")
+    (add2out_indentnl outbuf 0)
+    (add2out_strconst outbuf "melt_ptr_t melt_code_to_ctype (int code) {")
+    (add2out_indentnl outbuf 1)	       
+    (add2out_strconst outbuf "switch (code) {")
+    (add2sbuf_indentnl outbuf 2)
+    (foreach_in_multiple
+     (ctytup)
+     (curctyp :long tix)
+     (debug "runtypesupport_cod2ctype curctyp=" curctyp)
+     (let ( (:long tixnext (+i tix 1)) 
+	     (ctypchar  (get_field :ctype_parchar curctyp))
+	     (ctypname  (get_field :named_name curctyp))
+	    )
+       (add2sbuf_indentnl outbuf 2)
+       (add2out outbuf ##{/* #$TIXNEXT: $CTYPNAME */}#)
+       (add2sbuf_indentnl outbuf 2)
+       (if (and ctypchar ctypname)
+	   (add2out outbuf ##{    case $CTYPCHAR: return MELT_PREDEF($CTYPNAME);}#
+		    ))
+     ))
+    (add2sbuf_indentnl outbuf 2)
+    (add2out_strconst outbuf "default: break;");
+    (add2sbuf_indentnl outbuf 2)
+    (add2out_strconst outbuf "} /*end switch code*/")
+    (add2sbuf_indentnl outbuf 1)
+    (add2out_strconst outbuf "return NULL;")
+    (add2sbuf_indentnl outbuf 1)
+    (add2out_strconst outbuf "} /* end of generated melt_code_to_ctype */")
+    (add2sbuf_indentnl outbuf 0)
+    (add2sbuf_indentnl outbuf 0)
+))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; internal function to generate parameter passing support
+(defun generate_runtypesupport_mag2str (ctytup valdesctup outname outdeclbuf outcodebuf)
+  (debug "generate_runtypesupport_mag2str start outname=" outname)
+  (assert_msg "check ctytup" (is_multiple ctytup) ctytup)
+  (assert_msg "check valdesctup" (is_multiple valdesctup) valdesctup)
+  (assert_msg "check outdeclbuf" (is_strbuf outdeclbuf) outdeclbuf)
+  (assert_msg "check outcodebuf" (is_strbuf outcodebuf) outcodebuf)
+  (strbuf_reserve outdeclbuf 35000)
+  (strbuf_reserve outcodebuf 75000)
+  (let 
+      ( 
+       (:long numdelta 1)
+       (:long lastnum 0)
+       )
+;;;;;;;;;;;;;;;;
+    (add2sbuf_indentnl outdeclbuf 0)
+    (add2sbuf_strconst outdeclbuf
+		       "/** declaration generated by generate_runtypesupport_mag2str **/")
+    (add2sbuf_indentnl outdeclbuf 0)
+    (add2sbuf_strconst outdeclbuf 
+		       "const char* melt_obmag_string (int i);")
+    (add2sbuf_indentnl outdeclbuf 0)
+    (add2sbuf_strconst outdeclbuf "#define MELT_OBMAG_STRING_generated")
+    (add2sbuf_indentnl outdeclbuf 0)
+    (add2sbuf_indentnl outdeclbuf 0)
+;;;
+    (add2sbuf_indentnl outcodebuf 0)
+    (add2sbuf_indentnl outcodebuf 0)
+    (add2sbuf_strconst outcodebuf 
+		       "/** start of code generated by generate_runtypesupport_mag2str **/")
+    (add2sbuf_indentnl outcodebuf 0)
+    (add2sbuf_string outcodebuf #{$'const char* melt_obmag_string (int i) {
+#define MELT_MAG2STR_CACHEBUF 17
+#define MELT_MAG2STR_MAGLEN   16
+   static char melt_cacheobmagbuf[MELT_MAG2STR_CACHEBUF][MELT_MAG2STR_MAGLEN] ;
+   switch (i) {
+     case 0: return "MeltObMag!0" ;}#
+ )
+    (foreach_in_multiple
+     (ctytup)
+     (curctyp :long tix)
+     (debug "runtypesupport_mag2str curctyp=" curctyp)
+     (add2sbuf_indentnl outcodebuf 1)
+     (add2sbuf_strconst outcodebuf "/*gtyctype #")
+     (add2sbuf_longdec outcodebuf (+i 1 tix))
+     (add2sbuf_strconst outcodebuf " ")
+     (add2sbuf_ccomstring outcodebuf (get_field :named_name curctyp))
+     (add2sbuf_strconst outcodebuf "*/")
+     (add2sbuf_indentnl outcodebuf 4)
+     (let ( (boxmagicstr (get_field :ctypg_boxedmagic curctyp)) 
+	    )
+       (if boxmagicstr
+	   (progn
+	     (add2sbuf_strconst outcodebuf "case ")
+	     (add2sbuf_string outcodebuf boxmagicstr)
+	     (add2sbuf_strconst outcodebuf ": return \"")
+	     (add2sbuf_string outcodebuf boxmagicstr)
+	     (add2sbuf_strconst outcodebuf "\";")
+	     )
+	 (add2sbuf_strconst outcodebuf "/*runtypesupport_mag2str no boxed magic */")
+	 )
+       (add2sbuf_indentnl outcodebuf 1)
+       )
+     (let ( (mapmagicstr (get_field :ctypg_mapmagic curctyp)) 
+	    )
+       (if mapmagicstr
+	   (progn
+	     (add2sbuf_strconst outcodebuf "case ")
+	     (add2sbuf_string outcodebuf mapmagicstr)
+	     (add2sbuf_strconst outcodebuf ": return \"")
+	     (add2sbuf_string outcodebuf mapmagicstr)
+	     (add2sbuf_strconst outcodebuf "\";")
+	     )
+	 (add2sbuf_strconst outcodebuf "/*runtypesupport_mag2str no map magic */")
+	 )
+       (add2sbuf_indentnl outcodebuf 1)
+       )
+     )					;end foreach curctyp
+
+    (add2sbuf_indentnl outcodebuf 0)
+    (foreach_in_multiple
+     (valdesctup)
+     (curvaldesc :long vix)
+     (debug "generate_runtypesupport_mag2str curvaldesc=" curvaldesc)
+     (assert_msg "check curvaldesc" (is_a curvaldesc class_value_descriptor) curvaldesc)
+     (add2sbuf_indentnl outcodebuf 1)
+     (add2sbuf_strconst outcodebuf "/*valdesc #")
+     (add2sbuf_longdec outcodebuf (+i 1 vix))
+     (add2sbuf_strconst outcodebuf " ")
+     (add2sbuf_ccomstring outcodebuf (get_field :named_name curvaldesc))
+     (add2sbuf_strconst outcodebuf "*/")
+     (add2sbuf_indentnl outcodebuf 1)
+     (let ( (valmagicstr  (get_field :valdesc_objmagic curvaldesc))
+	    )
+       (if valmagicstr
+	   (progn
+	     (add2sbuf_strconst outcodebuf "case ")
+	     (add2sbuf_string outcodebuf valmagicstr)
+	     (add2sbuf_strconst outcodebuf ": return \"")
+	     (add2sbuf_string outcodebuf valmagicstr)
+	     (add2sbuf_strconst outcodebuf "\";"))
+	 (add2sbuf_strconst outcodebuf "/*runtypesupport_mag2str no value magic*/"))
+       (add2sbuf_indentnl outcodebuf 1)
+       )
+     )					;end foreach valdesctup
+
+    (add2sbuf_string outcodebuf #{$'default:
+  { int ix = (i & 0x3ffffff) % MELT_MAG2STR_CACHEBUF;
+    snprintf (melt_cacheobmagbuf[ix], MELT_MAG2STR_MAGLEN-1, "?MeltObjMag?%d", i);
+    return melt_cacheobmagbuf[ix];
+  }
+ } /* end switch */
+} /* end generated melt_obmag_string */
+}#)
+    (add2sbuf_indentnl outcodebuf 0)
+    (add2sbuf_strconst outcodebuf 
+		       "/** end of code generated by generate_runtypesupport_mag2str **/")
+    (add2sbuf_indentnl outcodebuf 0)
+    )
+  )
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;; generate the boxing related functions for GTY-ed types.
+(defun generate_runtypesupport_boxingfun (ctytup outarg
+						 declbuf codebuf)
+  (debug "generate_runtypesupport_boxingfun start outarg=" outarg)
+  (assert_msg "check ctytup is tuple" (is_multiple ctytup) ctytup)
+  (assert_msg "check declbuf is buffer" (is_strbuf declbuf) declbuf)
+  (assert_msg "check codebuf is buffer" (is_strbuf codebuf) codebuf)
+  (strbuf_reserve declbuf 35000)
+  (strbuf_reserve codebuf 75000)
+  (add2sbuf_indentnl declbuf 0)
+  (add2sbuf_indentnl declbuf 0)
+  (add2sbuf_strconst declbuf 
+		     "/** start of declarations generated by generate_runtypesupport_boxingfun **/")
+  (add2sbuf_indentnl declbuf 0)
+  ;;
+  (add2sbuf_indentnl codebuf 0)
+  (add2sbuf_indentnl codebuf 0)
+  (add2sbuf_strconst codebuf 
+		     "/** start of code generated by generate_runtypesupport_boxingfun **/")
+  (add2sbuf_indentnl codebuf 0)
+  (foreach_in_multiple
+   (ctytup)
+   (curctyp :long tix)
+   (debug "generate runtypesupport_mapfun curctyp=" curctyp)
+   (assert_msg "check curctyp" (is_a curctyp class_ctype_gty) curctyp)
+   (match curctyp
+	  (?(instance class_ctype_gty
+		      :named_name          ?(some_string_value ?ctypnam)
+		      :ctype_cname         ?(some_string_value ?cname)
+		      :ctypg_boxedmagic    ?(some_string_value ?boxedmagic)
+		      :ctypg_boxedstruct   ?(some_string_value ?boxedstruct)
+		      :ctype_autoboxdiscr  ?(and 
+					     ?boxdiscr
+					     ?(instance class_discriminant
+							:named_name ?boxdiscrname))
+		      :ctype_autoconstboxdiscr  ?boxconstdiscr
+		      :ctypg_boxfun        ?(some_string_value ?boxfun)
+		      :ctypg_unboxfun      ?(some_string_value ?unboxfun)
+		      :ctypg_updateboxfun  ?(some_string_value ?updateboxfun)
+		      )
+	    (add2sbuf_strconst declbuf "/*runtypesupport gtyctype #")
+	    (add2sbuf_longdec declbuf (+i 1 tix))
+	    (add2sbuf_strconst declbuf " ")
+	    (add2sbuf_ccomstring declbuf (get_field :named_name curctyp))
+	    (add2sbuf_strconst declbuf "*/")
+	    (add2sbuf_indentnl declbuf 0)
+	    (add2sbuf_strconst declbuf "melt_ptr_t ")
+	    (add2sbuf_string declbuf boxfun)
+	    (add2sbuf_strconst declbuf "(meltobject_ptr_t discr, ")
+	    (add2sbuf_string declbuf cname)
+	    (add2sbuf_strconst declbuf " val);")
+	    (add2sbuf_indentnl declbuf 0)
+	    (add2sbuf_strconst declbuf "void ")
+	    (add2sbuf_string declbuf updateboxfun)
+	    (add2sbuf_strconst declbuf "(melt_ptr_t boxp, ")
+	    (add2sbuf_string declbuf cname)
+	    (add2sbuf_strconst declbuf " val);")
+	    (add2sbuf_indentnl declbuf 0)
+	    (add2sbuf_indentnl declbuf 0)
+	    (add2sbuf_strconst declbuf "static inline ")
+	    (add2sbuf_string declbuf cname)
+	    (add2sbuf_strconst declbuf " ")
+	    (add2sbuf_string declbuf unboxfun)
+	    (add2sbuf_strconst declbuf "(melt_ptr_t box_p) {")
+	    (add2sbuf_indentnl declbuf 1)
+	    (add2sbuf_strconst declbuf "if (melt_magic_discr(box_p) == ")
+	    (add2sbuf_string declbuf boxedmagic)
+	    (add2sbuf_strconst declbuf ")")
+	    (add2sbuf_indentnl declbuf 2)
+	    (add2sbuf_strconst declbuf "return ((struct ")
+	    (add2sbuf_string declbuf boxedstruct)
+	    (add2sbuf_strconst declbuf "*)box_p)->val;")
+	    (add2sbuf_indentnl declbuf 1)
+	    (add2sbuf_strconst declbuf "return (")
+	    (add2sbuf_string declbuf cname)
+	    (add2sbuf_strconst declbuf ")0;")
+	    (add2sbuf_indentnl declbuf 0)
+	    (add2sbuf_strconst declbuf "} /* end generated ")
+	    (add2sbuf_string declbuf unboxfun)
+	    (add2sbuf_strconst declbuf " */")
+	    (add2sbuf_indentnl declbuf 0)
+	    (add2sbuf_indentnl declbuf 0)
+;;;;
+	    (add2sbuf_strconst codebuf "/*gtyctype #")
+	    (add2sbuf_longdec codebuf (+i 1 tix))
+	    (add2sbuf_strconst codebuf " ")
+	    (add2sbuf_ccomstring codebuf (get_field :named_name curctyp))
+	    (add2sbuf_strconst codebuf "*/")
+	    (add2sbuf_indentnl codebuf 1)
+	    (add2sbuf_indentnl codebuf 0)
+	    (add2sbuf_strconst codebuf "melt_ptr_t")
+	    (add2sbuf_indentnl codebuf 0)
+	    (add2sbuf_string codebuf boxfun)
+	    (add2sbuf_strconst codebuf "(meltobject_ptr_t discr_p, ")
+	    (add2sbuf_string codebuf cname)
+	    (add2sbuf_strconst codebuf " val) { /*runtypesupport generated boxingfun*/")
+	    (add2sbuf_indentnl codebuf 1)
+	    (add2sbuf_strconst codebuf "MELT_ENTERFRAME (2, NULL);")
+	    (add2sbuf_indentnl codebuf 0)
+	    (add2sbuf_strconst codebuf 
+			       "#define resv meltfram__.mcfr_varptr[0]")
+	    (add2sbuf_indentnl codebuf 0)
+	    (add2sbuf_strconst codebuf 
+			       "#define discrv meltfram__.mcfr_varptr[1]")
+	    (add2sbuf_indentnl codebuf 1)
+	    (add2sbuf_strconst codebuf 
+			       "discrv = (melt_ptr_t) discr_p;")
+	    (add2sbuf_indentnl codebuf 1)
+	    (add2sbuf_strconst codebuf 
+			       "if (!discrv) discrv = MELT_PREDEF(")
+	    (add2sbuf_string codebuf boxdiscrname)
+	    (add2sbuf_strconst codebuf ");")
+	    (add2sbuf_indentnl codebuf 1)
+	    (add2sbuf_strconst codebuf 
+			       "if (melt_magic_discr((melt_ptr_t)discrv) != MELTOBMAG_OBJECT) goto end;")
+	    (add2sbuf_indentnl codebuf 1)
+	    (add2sbuf_strconst codebuf 
+			       "if (((meltobject_ptr_t)(discrv))->meltobj_magic != ")
+	    (add2sbuf_string codebuf boxedmagic)
+	    (add2sbuf_strconst codebuf ") goto end;")
+	    (add2sbuf_indentnl codebuf 1)
+	    (add2sbuf_strconst codebuf "resv = (melt_ptr_t) meltgc_allocate (sizeof (struct ")
+	    (add2sbuf_string codebuf boxedstruct)
+	    (add2sbuf_strconst codebuf "), 0);")
+	    (add2sbuf_indentnl codebuf 1)
+	    (add2sbuf_strconst codebuf "((struct ")
+	    (add2sbuf_string codebuf boxedstruct)
+	    (add2sbuf_strconst codebuf "*) (resv))->discr = (meltobject_ptr_t)discrv;")
+	    (add2sbuf_indentnl codebuf 1)
+	    (add2sbuf_strconst codebuf "((struct ")
+	    (add2sbuf_string codebuf boxedstruct)
+	    (add2sbuf_strconst codebuf "*) (resv))->val = val;")
+	    (add2sbuf_indentnl codebuf 0)
+	    (add2sbuf_strconst codebuf "end: MELT_EXITFRAME ();")
+	    (add2sbuf_indentnl codebuf 1)
+	    (add2sbuf_strconst codebuf "return ((melt_ptr_t)(resv));")
+	    (add2sbuf_indentnl codebuf 0)
+	    (add2sbuf_strconst codebuf "#undef resv")
+	    (add2sbuf_indentnl codebuf 0)
+	    (add2sbuf_strconst codebuf "#undef discrv")
+	    (add2sbuf_indentnl codebuf 0)
+	    (add2sbuf_strconst codebuf "} /* end generated boxingfun ")
+	    (add2sbuf_string codebuf boxfun)
+	    (add2sbuf_strconst codebuf " */")
+	    (add2sbuf_indentnl codebuf 0)
+	    (add2sbuf_indentnl codebuf 0)
+	    (add2sbuf_strconst codebuf "void")
+	    (add2sbuf_indentnl codebuf 0)
+	    (add2sbuf_string codebuf updateboxfun)
+	    (add2sbuf_strconst codebuf "(melt_ptr_t box_p, ")
+	    (add2sbuf_string codebuf cname)
+	    (add2sbuf_strconst codebuf " val) { /*generated updateboxfun */")
+	    (add2sbuf_indentnl codebuf 1)
+	    (add2sbuf_strconst codebuf "MELT_ENTERFRAME (1, NULL);")
+	    (add2sbuf_indentnl codebuf 0)
+	    (add2sbuf_strconst codebuf 
+			       "#define boxv meltfram__.mcfr_varptr[0]")
+	    (add2sbuf_indentnl codebuf 1)
+	    (add2sbuf_strconst codebuf "boxv = box_p;")
+	    (add2sbuf_indentnl codebuf 1)
+	    (add2sbuf_strconst codebuf 
+			       "if (melt_magic_discr((melt_ptr_t)boxv) != ")
+	    (add2sbuf_string codebuf boxedmagic)
+	    (add2sbuf_strconst codebuf ") goto end;")
+	    ;; if we have a ctype_autoconstboxdiscr ensure we are not
+	    ;; updating such a constant box....
+	    (add2sbuf_indentnl codebuf 1)
+	    (if (is_a boxconstdiscr class_discriminant)
+		(let ( 
+		      (boxconstdiscrname (get_field :named_name boxconstdiscr))
+		      )
+		  (add2out codebuf 
+			   ##{if (((melt_ptr_t) boxv)->u_discr
+				  /* generated updatebox nonconst */
+				  == (meltobject_ptr_t) MELT_PREDEF ($BOXCONSTDISCRNAME))
+			        goto end ;}#
+			   )
+		  (add2sbuf_indentnl codebuf 1)
+		  ))
+	    ;;
+	    ;;
+	    (add2sbuf_strconst codebuf "((struct ")
+	    (add2sbuf_string codebuf boxedstruct)
+	    (add2sbuf_strconst codebuf "*) (boxv))->val = val;")
+	    (add2sbuf_indentnl codebuf 1)
+	    (add2sbuf_strconst codebuf "meltgc_touch ((melt_ptr_t)boxv);")
+	    (add2sbuf_indentnl codebuf 0)
+	    (add2sbuf_strconst codebuf "end: MELT_EXITFRAME ();")
+	    (add2sbuf_indentnl codebuf 0)
+	    (add2sbuf_strconst codebuf "#undef boxv")
+	    (add2sbuf_indentnl codebuf 0)
+	    (add2sbuf_strconst codebuf "} /* end generated updateboxfun ")
+	    (add2sbuf_string codebuf updateboxfun)
+	    (add2sbuf_strconst codebuf " */")
+	    (add2sbuf_indentnl codebuf 0)
+	    (add2sbuf_indentnl codebuf 0)
+	    )
+	  (?_
+	   (errormsg_strv "invalid GTY-ed ctype for boxing"
+			  (get_field :named_name curctyp))
+	   (assert_msg "invalid curctype" () curctyp)
+	   ))
+   )					;end foreach
+  (add2sbuf_indentnl declbuf 0)
+  (add2sbuf_strconst declbuf 
+		     "/** end of declarations generated by generate_runtypesupport_boxingfun **/")
+  (add2sbuf_indentnl declbuf 0)
+  (add2sbuf_indentnl declbuf 0)
+  (add2sbuf_indentnl codebuf 0)
+  (add2sbuf_strconst codebuf 
+		     "/** end of code generated by generate_runtypesupport_boxingfun **/")
+  (add2sbuf_indentnl codebuf 0)
+  (add2sbuf_indentnl codebuf 0)
+  (debug "generate_runtypesupport_boxingfun end outarg=" outarg)
+  )
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;; generate the inlined map functions for map of GTY-ed types.
+
+(defun generate_runtypesupport_mapfun (ctytup outarg outbuf)
+  (debug "generate_runtypesupport_mapfun start outarg=" outarg)
+  (assert_msg "check ctytup is tuple" (is_multiple ctytup) ctytup)
+  (assert_msg "check outbuf is buffer" (is_strbuf outbuf) outbuf)
+  (strbuf_reserve outbuf 65000)
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_strconst outbuf 
+		     "/** start of code generated by generate_runtypesupport_mapfun **/")
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_indentnl outbuf 0)
+;;;
+  (foreach_in_multiple
+   (ctytup)
+   (curctyp :long tix)
+   (debug "generate runtypesupport_mapfun curctyp=" curctyp)
+   (assert_msg "check curctyp" (is_a curctyp class_ctype_gty) curctyp)
+   (add2sbuf_strconst outbuf "/*gtyctype #")
+   (add2sbuf_longdec outbuf (+i 1 tix))
+   (add2sbuf_strconst outbuf " ")
+   (add2sbuf_ccomstring outbuf (get_field :named_name curctyp))
+   (add2sbuf_strconst outbuf "*/")
+   (add2sbuf_indentnl outbuf 1)
+   (match curctyp
+	  (?(instance class_ctype_gty
+		      :named_name          ?(some_string_value ?ctypnam)
+		      :ctype_cname         ?(some_string_value ?cname)
+		      :ctypg_mapstruct     ?(some_string_value ?mapstruct)
+		      :ctypg_mapmagic      ?(some_string_value ?mapmagic)
+		      :ctypg_mapdiscr      ?(and ?(instance class_discriminant 
+							    :named_name ?mapdiscrname) ?mapdiscr)
+		      :ctypg_mapunimemb    ?(some_string_value ?mapunimemb)
+		      :ctypg_newmapfun     ?(some_string_value ?newmapfun)
+		      :ctypg_mapgetfun     ?(some_string_value ?mapgetfun)
+		      :ctypg_mapputfun     ?(some_string_value ?mapputfun)
+		      :ctypg_mapremovefun  ?(some_string_value ?mapremovefun)
+	   	      :ctypg_mapcountfun   ?(some_string_value ?mapcountfun)
+	   	      :ctypg_mapsizefun	   ?(some_string_value ?mapsizefun)	 
+	   	      :ctypg_mapnattfun	   ?(some_string_value ?mapnattfun)	 
+	   	      :ctypg_mapnvalfun	   ?(some_string_value ?mapnvalfun)
+		      :ctypg_mapauxdatafun ?(some_string_value ?mapauxdatafun)
+		      :ctypg_mapauxputfun  ?(some_string_value ?mapauxputfun)
+		      )
+	    (add2sbuf_indentnl outbuf 0)
+	    (add2sbuf_strconst outbuf "/***map support for GTY ctype ")
+	    (add2sbuf_string outbuf ctypnam)
+	    (add2sbuf_strconst outbuf " **/")
+	    (add2sbuf_indentnl outbuf 0)
+;;;
+;;; generate the new map function
+	    (cond
+	     ((is_string newmapfun)
+	      (add2sbuf_strconst outbuf "static inline melt_ptr_t /*New map for ")
+	      (add2sbuf_string outbuf ctypnam)
+	      (add2sbuf_strconst outbuf "*/ ")
+	      (add2sbuf_string outbuf newmapfun)
+	      (add2sbuf_strconst outbuf " (meltobject_ptr_t discr, unsigned len) {")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_string outbuf 
+			       #{$' /*generated map creation */
+			       if (melt_magic_discr ((melt_ptr_t) discr) != MELTOBMAG_OBJECT)
+			       return NULL ;
+			       if (discr->meltobj_magic != }#)
+			       (add2sbuf_string outbuf mapmagic)
+			       (add2sbuf_string outbuf #{$') /* not map magic */
+			       return NULL ;
+			       return (melt_ptr_t) meltgc_raw_new_mappointers (discr, len) ;
+			       } /*end generated new map for }#)
+	      (add2sbuf_string outbuf ctypnam)
+	      (add2sbuf_strconst outbuf " */")
+	      (add2sbuf_indentnl outbuf 0)
+	      )
+	     (:else
+	      (add2sbuf_strconst outbuf "/* no new map function */")
+	      )
+	     )
+	    (add2sbuf_indentnl outbuf 0)
+;;;
+;;; generate the map getter function
+	    (cond
+	     ((is_string mapgetfun)
+	      (add2sbuf_strconst outbuf "static inline melt_ptr_t /* Map getter for ")
+	      (add2sbuf_string outbuf ctypnam)
+	      (add2sbuf_strconst outbuf "*/ ")
+	      (add2sbuf_string outbuf mapgetfun)
+	      (add2sbuf_strconst outbuf " (melt_ptr_t map_p, ")
+	      (add2sbuf_string outbuf cname)
+	      (add2sbuf_strconst outbuf " attr) {")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf "if (!map_p || !attr ")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf " || melt_magic_discr ((melt_ptr_t) map_p) != ")
+	      (add2sbuf_string outbuf mapmagic)
+	      (add2sbuf_strconst outbuf ")")
+	      (add2sbuf_indentnl outbuf 4)
+	      (add2sbuf_strconst outbuf "return NULL;")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf "return melt_raw_get_mappointers ((void*)map_p, (void*)attr);")
+	      (add2sbuf_indentnl outbuf 0)
+	      (add2sbuf_strconst outbuf "} /*end generated map getter for ")
+	      (add2sbuf_string outbuf ctypnam)
+	      (add2sbuf_strconst outbuf "*/")
+	      (add2sbuf_indentnl outbuf 0)
+	      )
+	     (:else
+	      (add2sbuf_strconst outbuf "/*no map getter function*/")
+	      )
+	     )
+	    (add2sbuf_indentnl outbuf 0)
+;;;
+;;; generate the map putter function
+	    (cond
+	     ((is_string mapputfun)
+	      (add2sbuf_strconst outbuf "static inline void /* Map putter for ")
+	      (add2sbuf_string outbuf ctypnam)
+	      (add2sbuf_strconst outbuf "*/ ")
+	      (add2sbuf_string outbuf mapputfun)
+	      (add2sbuf_strconst outbuf " (melt_ptr_t map_p, ")
+	      (add2sbuf_string outbuf cname)
+	      (add2sbuf_strconst outbuf " attr, melt_ptr_t valu_p) {")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf "if (!map_p || !attr || !valu_p")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf " || melt_magic_discr ((melt_ptr_t) map_p) != ")
+	      (add2sbuf_string outbuf mapmagic)
+	      (add2sbuf_strconst outbuf ")")
+	      (add2sbuf_indentnl outbuf 4)
+	      (add2sbuf_strconst outbuf "return;")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf "meltgc_raw_put_mappointers ((void*)map_p, (void*)attr, valu_p);")
+	      (add2sbuf_indentnl outbuf 0)
+	      (add2sbuf_strconst outbuf "} /*end generated map putter for ")
+	      (add2sbuf_string outbuf ctypnam)
+	      (add2sbuf_strconst outbuf "*/")
+	      )
+	     (:else
+	      (add2sbuf_strconst outbuf "/*no map putter*/")
+	      ))
+	    (add2sbuf_indentnl outbuf 0)
+;;;
+;;; generate the map remover function
+	    (cond
+	     ((is_string mapremovefun)
+	      (add2sbuf_strconst outbuf "static inline void /* Map remover for ")
+	      (add2sbuf_string outbuf ctypnam)
+	      (add2sbuf_strconst outbuf "*/ ")
+	      (add2sbuf_string outbuf mapremovefun)
+	      (add2sbuf_strconst outbuf " (melt_ptr_t map_p, ")
+	      (add2sbuf_string outbuf cname)
+	      (add2sbuf_strconst outbuf " attr) {")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf "if (!map_p || !attr")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf " || melt_magic_discr ((melt_ptr_t) map_p) != ")
+	      (add2sbuf_string outbuf mapmagic)
+	      (add2sbuf_strconst outbuf ")")
+	      (add2sbuf_indentnl outbuf 4)
+	      (add2sbuf_strconst outbuf "return;")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf "meltgc_raw_remove_mappointers ((void*)map_p, (void*)attr);")
+	      (add2sbuf_indentnl outbuf 0)
+	      (add2sbuf_strconst outbuf "} /*end generated map remover for ")
+	      (add2sbuf_string outbuf ctypnam)
+	      (add2sbuf_strconst outbuf "*/")
+	      (void)
+	      )
+	     (:else
+	      (add2sbuf_strconst outbuf "/*no map remover*/")
+	      )
+	     )
+	    (add2sbuf_indentnl outbuf 0)
+;;;
+;;; generate the map counter function
+	    (cond
+	     ((is_string mapcountfun)
+	      (add2sbuf_strconst outbuf "static inline unsigned /* Map counter for ")
+	      (add2sbuf_string outbuf ctypnam)
+	      (add2sbuf_strconst outbuf "*/ ")
+	      (add2sbuf_string outbuf mapcountfun)
+	      (add2sbuf_strconst outbuf " (struct ")
+	      (add2sbuf_string outbuf mapstruct)
+	      (add2sbuf_strconst outbuf "* map_s) {")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf "if (!map_s")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf " || melt_magic_discr ((melt_ptr_t) map_s) != ")
+	      (add2sbuf_string outbuf mapmagic)
+	      (add2sbuf_strconst outbuf ")")
+	      (add2sbuf_indentnl outbuf 4)
+	      (add2sbuf_strconst outbuf "return 0;")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf "return map_s->count;")
+	      (add2sbuf_indentnl outbuf 0)
+	      (add2sbuf_strconst outbuf "} /*end generated map counter for ")
+	      (add2sbuf_string outbuf ctypnam)
+	      (add2sbuf_strconst outbuf "*/")
+	      (void)
+	      )
+	     (:else
+	      (add2sbuf_strconst outbuf "/*no map counter function*/")
+	      )
+	     )
+	    (add2sbuf_indentnl outbuf 0)
+;;;
+;;; generate the map size function
+	    (cond
+	     ((is_string mapsizefun)
+	      (add2sbuf_strconst outbuf "static inline unsigned /* Map size for ")
+	      (add2sbuf_string outbuf ctypnam)
+	      (add2sbuf_strconst outbuf "*/ ")
+	      (add2sbuf_string outbuf mapsizefun)
+	      (add2sbuf_strconst outbuf " (struct ")
+	      (add2sbuf_string outbuf mapstruct)
+	      (add2sbuf_strconst outbuf "* map_s) {")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf "if (!map_s")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf " || melt_magic_discr ((melt_ptr_t) map_s) != ")
+	      (add2sbuf_string outbuf mapmagic)
+	      (add2sbuf_strconst outbuf ")")
+	      (add2sbuf_indentnl outbuf 4)
+	      (add2sbuf_strconst outbuf "return 0;")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf "return melt_primtab[map_s->lenix];")
+	      (add2sbuf_indentnl outbuf 0)
+	      (add2sbuf_strconst outbuf "} /*end generated map size for ")
+	      (add2sbuf_string outbuf ctypnam)
+	      (add2sbuf_strconst outbuf "*/")
+	      )
+	     (:else 
+	      (add2sbuf_strconst outbuf "/* no map size function */")
+	      ))
+	    (add2sbuf_indentnl outbuf 0)
+;;;
+;;;
+;;; generate the map nth attr function
+	    (cond 
+	     ((is_string mapnattfun)
+	      (add2sbuf_strconst outbuf "static inline ")
+	      (add2sbuf_string outbuf cname)
+	      (add2sbuf_strconst outbuf "/* Map nth attr for ")
+	      (add2sbuf_string outbuf ctypnam)
+	      (add2sbuf_strconst outbuf "*/ ")
+	      (add2sbuf_string outbuf mapnattfun)
+	      (add2sbuf_strconst outbuf " (struct ")
+	      (add2sbuf_string outbuf mapstruct)
+	      (add2sbuf_strconst outbuf "* map_s, int ix) {")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_string outbuf cname)
+	      (add2sbuf_strconst outbuf " at = 0;")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf "if (!map_s")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf " || melt_magic_discr ((melt_ptr_t) map_s) != ")
+	      (add2sbuf_string outbuf mapmagic)
+	      (add2sbuf_strconst outbuf ")")
+	      (add2sbuf_indentnl outbuf 4)
+	      (add2sbuf_strconst outbuf "return 0;")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf "at = map_s->entab[ix].e_at;")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf "if ((void*) at == (void*) HTAB_DELETED_ENTRY) return 0;")
+	      (add2sbuf_strconst outbuf "return at;")
+	      (add2sbuf_indentnl outbuf 0)
+	      (add2sbuf_strconst outbuf "} /*end generated map nth attr for ")
+	      (add2sbuf_string outbuf ctypnam)
+	      (add2sbuf_strconst outbuf "*/")
+	      )
+	     (:else
+	      (add2sbuf_strconst outbuf "/*no map nth attr function*/"))
+	     )
+	    (add2sbuf_indentnl outbuf 0)
+;;;
+;;; generate the map nth value function
+	    (cond 
+	     ((is_string mapnvalfun)
+	      (add2sbuf_strconst outbuf "static inline melt_ptr_t ")
+	      (add2sbuf_strconst outbuf "/* Map nth value for ")
+	      (add2sbuf_string outbuf ctypnam)
+	      (add2sbuf_strconst outbuf "*/ ")
+	      (add2sbuf_string outbuf mapnvalfun)
+	      (add2sbuf_strconst outbuf " (struct ")
+	      (add2sbuf_string outbuf mapstruct)
+	      (add2sbuf_strconst outbuf "* map_s, int ix) {")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_string outbuf cname)
+	      (add2sbuf_strconst outbuf " at = 0;")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf "if (!map_s")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf " || melt_magic_discr ((melt_ptr_t) map_s) != ")
+	      (add2sbuf_string outbuf mapmagic)
+	      (add2sbuf_strconst outbuf ")")
+	      (add2sbuf_indentnl outbuf 4)
+	      (add2sbuf_strconst outbuf "return 0;")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf "at = map_s->entab[ix].e_at;")
+	      (add2sbuf_indentnl outbuf 2)
+	      (add2sbuf_strconst outbuf "if ((void*) at == (void*) HTAB_DELETED_ENTRY) return 0;")
+	      (add2sbuf_strconst outbuf "return map_s->entab[ix].e_va;")
+	      (add2sbuf_indentnl outbuf 0)
+	      (add2sbuf_strconst outbuf "} /*end generated map nth value for ")
+	      (add2sbuf_string outbuf ctypnam)
+	      (add2sbuf_strconst outbuf "*/")
+	      )
+	     (:else
+	      (add2sbuf_strconst outbuf "/*no map nth value function*/"))
+	     )
+	    (add2sbuf_indentnl outbuf 0)
+;;;
+;;; generate the map auxiliary data access function
+	    (cond 
+	     ((is_string mapauxdatafun)
+	      (add2out 
+	       outbuf
+	       ##{ /* map auxiliary data access for $CTYPNAM */
+	       static inline melt_ptr_t $MAPAUXDATAFUN (melt_ptr_t map_p)
+	       {
+	         if (melt_magic_discr (map_p) == $MAPMAGIC)
+		   return ((struct $MAPSTRUCT*)map_p)->meltmap_aux;
+		 return NULL;
+	       }
+	       }#)
+	      )
+	     (:else
+	      (add2out outbuf ##{/*no map auxiliary data access function for $CTYPNAM*/}#)
+	     ))
+	    (add2sbuf_indentnl outbuf 0)
+;;;
+;;; generate the map auxiliary data putter function
+	    (cond 
+	     ((is_string mapauxputfun)
+	      (add2out 
+	       outbuf
+	       ##{ /* map auxiliary data put for $CTYPNAM */
+	       static inline melt_ptr_t $MAPAUXPUTFUN (melt_ptr_t map_p, melt_ptr_t val_p)
+	       {
+	         if (melt_magic_discr (map_p) == $MAPMAGIC) {
+		   ((struct $MAPSTRUCT*)map_p)->meltmap_aux = val_p;
+		   meltgc_touch_dest (map_p, val_p);
+                 }
+		 return NULL;
+	       }
+	       }#)
+	      )
+	     (:else
+	      (add2out outbuf ##{/*no map auxiliary data put function for $CTYPNAM*/}#)
+	     ))
+	    (add2sbuf_indentnl outbuf 0)
+	      
+
+;;;;;;;;;;
+;;; trailer of map support
+	    (add2sbuf_strconst outbuf "/***end of map support for GTY ctype ")
+	    (add2sbuf_string outbuf ctypnam)
+	    (add2sbuf_strconst outbuf " **/")
+	    (add2sbuf_indentnl outbuf 1)
+	    )
+	  (?_
+	   (add2sbuf_strconst outbuf "/*incomplete gtypctype*/")
+	   )
+	  ) ;; end match
+   (add2sbuf_indentnl outbuf 1)
+   )					;end foreach ctype
+;;;
+  (add2sbuf_strconst outbuf 
+		     "/** end of code generated by generate_runtypesupport_mapfun **/")
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_indentnl outbuf 0)
+  (debug "generate_runtypesupport_mapfun end outarg=" outarg)
+  )
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;; generate the predefined class lengths and field offsets 
+
+(defun generate_runtypesupport_predef_fields (outbuf)
+  (debug "generate_runtypesupport_predef_fields start outbuf=" outbuf)
+  (assert_msg "check outbuf" (is_out outbuf) outbuf)
+  (strbuf_reserve outbuf 27500)
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_strconst outbuf 
+		     "/** start of code generated by generate_runtypesupport_predef_fields **/")
+  (add2sbuf_indentnl outbuf 0)
+  (let ( (curpredef ())
+	 (:long nbpredef 0)
+	 )
+    (code_chunk getnbpredefchk #{/*$GETNBPREDEFCHK*/ $NBPREDEF= MELTGLOB__LASTWIRED ;}#
+		)
+    (foreach_long_upto
+     (1 nbpredef)
+     (:long prix)
+     (code_chunk getpredefchk #{/*$GETPREDEFCHK*/ $CURPREDEF= melt_fetch_predefined($PRIX) ; }#
+		 )
+     (debug "generate_runtypesupport_predef_fields prix=" prix " curpredef=" curpredef)
+     (if (is_a curpredef class_class)
+	 (let ( (clasnam (get_field :named_name curpredef))
+		(clasfields (get_field :class_fields curpredef))
+		(:long nbfields (multiple_length clasfields))
+		)
+	   (add2sbuf_indentnl outbuf 0)
+	   (add2out outbuf "#define MELT_HAS_PREDEF_" clasnam)
+	   (add2sbuf_indentnl outbuf 0)
+	   (add2out outbuf ##{/* predefined class $CLASNAM index $PRIX */ enum { }#)
+	   (foreach_in_multiple
+	    (clasfields)
+	    (curfield :long fldix)
+	    (assert_msg "check curfield" (is_a curfield class_field) curfield)
+	    (if (== (get_field :fld_ownclass curfield) curpredef)
+		(let ( (fldnam (get_field :named_name curfield))
+		       (:long fldix (get_int curfield))
+		       )
+		  (add2sbuf_indentnl outbuf 1)
+		  (add2out outbuf ##{ MELTFIELD_$FLDNAM = $FLDIX /*in $CLASNAM*/,}#)
+		  ))
+	    )
+	   (add2sbuf_indentnl outbuf 1)
+	   (add2out outbuf ##{  MELTLENGTH_$CLASNAM = $NBFIELDS } ;}#
+		    )
+	   ))))
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_strconst outbuf 
+		     "/** end of code generated by generate_runtypesupport_predef_fields **/")
+  (add2sbuf_indentnl outbuf 0)
+  (add2sbuf_indentnl outbuf 0)
+  (debug "generate_runtypesupport_predef_fields end outbuf=" outbuf)
+  )
+  
+
+
+
+(defun generate_runtypesupport_predefined_hooks (outdeclbuf outcodebuf)
+  (add2sbuf_indentnl outdeclbuf 0)
+  (add2sbuf_indentnl outcodebuf 0)
+  (let ( (curpredef ())
+	 (:long nbpredef 0)
+	 (parenv (parent_module_environment))
+	 )
+    (shortbacktrace_dbg "generate_runtypesupport_predefined_hooks" 10)
+    (code_chunk getnbpredefchk #{/*$GETNBPREDEFCHK*/ $NBPREDEF= MELTGLOB__LASTWIRED ;}#
+		)
+    (add2out outdeclbuf ##{/* declarations generated by generate_runtypesupport_predefined_hooks for $NBPREDEF predefined */}#)
+    (add2sbuf_indentnl outdeclbuf 0)
+    (add2out outcodebuf ##{/*code generated by generate_runtypesupport_predefined_hooks for $NBPREDEF predefined */}#)
+    (add2sbuf_indentnl outcodebuf 0)
+    (foreach_long_upto
+     (1 nbpredef)
+     (:long prix)
+     (code_chunk getpredefchk #{/*$GETPREDEFCHK*/ $CURPREDEF= melt_fetch_predefined($PRIX) ; }#
+		 )
+     (if (is_hook curpredef)
+	 (let ( (hkname (hook_name curpredef))
+		(hksymb (get_symbolstr hkname))
+		(hkbind (find_env parenv hksymb))
+		(hkdata (hook_data curpredef))
+		)
+	   (add2sbuf_indentnl outcodebuf 0)
+	   (add2sbuf_indentnl outdeclbuf 0)
+	   (debug "generate_runtypesupport_predefined_hooks prix#" prix " curpredef=" curpredef 
+		  "\n hkname=" hkname "\n.. hksymb=" hksymb "\n.. hkbind=" hkbind "\n.. hkdata=" hkdata)
+	   (add2out outdeclbuf ##{/*predefined hook declaration $HKNAME #$PRIX*/}#)
+	   (add2sbuf_indentnl outdeclbuf 0)
+	   (add2out outcodebuf ##{/*predefined hook definition $HKNAME #$PRIX*/}#)
+	   (add2sbuf_indentnl outcodebuf 0)
+	   (if (is_a hkdata class_hook_descriptor)
+	       (let ( (dname (get_field :named_name hkdata))
+		      (dins (get_field :hookdesc_in_formals hkdata))
+		      (douts (get_field :hookdesc_out_formals hkdata))
+		      (dctype (get_field :hookdesc_ctype hkdata))
+		      (ctynam (get_field :ctype_cname dctype))
+		      (:long nbparam 0)
+		      )
+		 (add2out outdeclbuf "MELT_EXTERN " ctynam " melthookproc_" hkname "(")
+		 (add2out outcodebuf  ctynam " melthookproc_" hkname "(")
+		 (foreach_in_multiple 
+		  (dins)
+		  (curinsb :long inix)
+		  (debug "generate_runtypesupport_predefined_hooks curinsb=" curinsb " inix#" inix)
+		  (when (>i nbparam 0) 
+		    (add2out outdeclbuf ", ")
+		    (add2out outcodebuf ", "))
+		  (setq nbparam (+i nbparam 1))
+		  (assert_msg "check curinsb" (is_a curinsb class_formal_binding) curinsb)
+		  (add2out outdeclbuf (get_field :ctype_cname (get_field :fbind_type curinsb)))
+		  (add2out outdeclbuf " meltin_" (get_field :named_name (get_field :binder curinsb)) "_p" inix)
+		  (add2out outcodebuf (get_field :ctype_cname (get_field :fbind_type curinsb)))
+		  (add2out outcodebuf " meltin_" (get_field :named_name (get_field :binder curinsb)) "_p" inix)
+		  )
+		 (foreach_in_multiple 
+		  (douts)
+		  (curoutb :long outix)
+		  (debug "generate_runtypesupport_predefined_hooks curoutb=" curoutb " outix#" outix)
+		  (when (>i nbparam 0) 
+		    (add2out outdeclbuf ", ")
+		    (add2out outcodebuf ", "))
+		  (setq nbparam (+i nbparam 1))
+		  (add2out outdeclbuf 
+			   (get_field :ctype_cname (get_field :fbind_type curoutb))
+			   "* meltout_" (get_field :named_name (get_field :binder curoutb)) "_o" outix)
+		  (add2out outcodebuf (get_field :ctype_cname (get_field :fbind_type curoutb)))
+		  (add2out outcodebuf "* meltout_" (get_field :named_name (get_field :binder curoutb)) "_o" outix)
+		  )
+		 (add2out outdeclbuf ");")
+		 (add2out outcodebuf ")")
+		 (add2sbuf_indentnl outdeclbuf 0)
+		 (add2sbuf_indentnl outcodebuf 0)
+		 (add2out 
+		  outcodebuf 
+		  "{ /* code emitted by generate_runtypesupport_predefined_hooks for " hkname "*/")
+		 (add2sbuf_indentnl outcodebuf 0)
+		 (add2out outcodebuf "#ifndef MELT_SKIP_HOOK_PREDEFINED_CODE")
+		 (add2sbuf_indentnl outcodebuf 1)
+		 (add2out outcodebuf 
+			  "  melthook_ptr_t melthkp = (melthook_ptr_t) MELT_PREDEF (" hkname ");")
+		 (add2sbuf_indentnl outcodebuf 1)
+		 (add2out outcodebuf "typedef " ctynam " melthooksig_" hkname "_t (")
+		 (add2out outcodebuf "melt_ptr_t")
+		 (foreach_in_multiple 
+		  (dins)
+		  (curinsb :long inix)
+		  (add2out outcodebuf ", " (get_field :ctype_cname (get_field :fbind_type curinsb)))
+		  )
+		 (foreach_in_multiple 
+		  (douts)
+		  (curoutb :long outix)
+		  (add2out outcodebuf ", "  (get_field :ctype_cname (get_field :fbind_type curoutb)) "* ")
+		  )
+		 (add2out outcodebuf ");")
+                 (add2sbuf_indentnl outcodebuf 1)
+                 (add2out outcodebuf "/*checkhook exist*/ melt_assertmsg (\" check predefhook " hkname " exists\", ")
+                 (add2sbuf_indentnl outcodebuf 15)
+                 (add2out outcodebuf "             melthkp != NULL);")
+                 (add2sbuf_indentnl outcodebuf 1)
+                 (add2out outcodebuf "/*checkhook ishook*/ melt_assertmsg (\" check predefhook " hkname " is hook\", ")
+                 (add2sbuf_indentnl outcodebuf 15)
+                 (add2out outcodebuf "             melt_magic_discr ((melt_ptr_t) melthkp) == MELTOBMAG_HOOK);")
+                 (add2sbuf_indentnl outcodebuf 1)
+                 (add2out
+                  outcodebuf 
+##{ /* check hook routine $HKNAME */
+                  melthooksig_$HKNAME#_t *melthookptr_$HKNAME = 
+                  (melthooksig_$HKNAME#_t*) (melthkp->hookad) ;
+                  melt_assertmsg("check predefhook routine $HKNAME", 
+                                 melthookptr_$HKNAME);
+}#)
+                 (add2sbuf_indentnl outcodebuf 1)
+                 (add2out
+                  outcodebuf ##{ /* check predefhook $HKNAME name */
+		  melt_assertmsg("check predefhook name $HKNAME",
+				 !strncmp (melthkp->hookname,
+					   "$HKNAME", MELT_HOOKNAME_LEN-1));}#
+		  )
+                 (add2sbuf_indentnl outcodebuf 1)
+                  (add2out
+                  outcodebuf ##{return (*melthookptr_$HKNAME) ((melt_ptr_t)melthkp}#
+                                                            )
+		  (foreach_in_multiple 
+		   (dins)
+		   (curinsb :long inix)
+		   (add2out outcodebuf ",")
+		   (add2sbuf_indentnl outcodebuf 20)
+		   (add2out outcodebuf " meltin_" (get_field :named_name (get_field :binder curinsb)) "_p" inix)
+		   )
+		  (foreach_in_multiple
+		   (douts)
+		   (curoutb :long outix)
+		   (add2out outcodebuf ",") 
+		   (add2sbuf_indentnl outcodebuf 20)
+		   (add2out outcodebuf " meltout_" (get_field :named_name (get_field :binder curoutb)) "_o" outix)
+		   )
+		  (add2out outcodebuf ");")
+		  (add2sbuf_indentnl outcodebuf 0)
+		  (add2out outcodebuf "#endif /* MELT_SKIP_HOOK_PREDEFINED_CODE */")
+		  (add2sbuf_indentnl outcodebuf 0)
+		  (add2out outcodebuf "} /* end  melthookproc_" hkname " */")
+		  (add2sbuf_indentnl outcodebuf 0)
+		  (add2sbuf_indentnl outcodebuf 0)
+		  )
+	     ;; else, not a hook data
+	     (progn
+	       (assert_msg "check hkdata is empty " (is_not_a hkdata class_hook_descriptor) hkdata)
+	       (add2out outcodebuf "#warning hook " hkname " without data")
+	       (add2out_indentnl outcodebuf 1)
+	       )
+	     ))
+	   )
+	   (add2sbuf_indentnl outcodebuf 0)
+       )
+     ;;
+     (add2out outdeclbuf
+	      ##{/* end of declarations generated by generate_runtypesupport_predefined_hooks for $NBPREDEF predefined */}#)
+     (add2sbuf_indentnl outdeclbuf 0)
+     (add2out outcodebuf 
+	      ##{/* end of code generated by generate_runtypesupport_predefined_hooks for $NBPREDEF predefined */}#)
+     (add2sbuf_indentnl outcodebuf 0)
+     ))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defun runtypesupport_docmd (cmd moduldata)
+  (debug "start runtypesupport_docmd cmd=" cmd " moduldata=" moduldata)
+  (let (
+	(outarg (or (make_stringconst discr_string (melt_argument "output"))
+		    '"meltrunsup"
+		    ))
+	(outdeclname (let ( (nambuf (make_strbuf discr_strbuf))
+			    )
+		       (add2sbuf_string nambuf outarg)
+		       (add2sbuf_strconst nambuf ".h")
+		       (strbuf2string discr_string nambuf)
+		       ))
+	(outcodename  (let ( (nambuf (make_strbuf discr_strbuf))
+			     )
+			(add2sbuf_string nambuf outarg)
+			(add2sbuf_strconst nambuf "-inc.cc")
+			(strbuf2string discr_string nambuf)
+			))
+	(dictypgty (retrieve_dictionnary_ctype_gty))
+	(rawctypgtylist (list))
+	(dictyp (retrieve_dictionnary_ctype))
+	(rawctyplist (list))
+	(outdeclbuf (make_strbuf discr_strbuf))
+	(outcodebuf (make_strbuf discr_strbuf))
+	)
+    (debug "runtypesupport_docmd dictypgty=" dictypgty
+	   " outarg=" outarg)
+    (generate_gplv3plus_copyright_notice_c_comment outdeclbuf outdeclname)
+    (generate_gplv3plus_copyright_notice_c_comment outcodebuf outcodename)
+    (foreach_in_mapstring
+     (dictypgty)
+     (curstr curcty)
+     (list_append rawctypgtylist curcty)
+     )
+    (debug "runtypesupport_docmd rawctypgtylist=" rawctypgtylist)
+    (foreach_in_mapstring
+     (dictyp)
+     (curstr curcty)
+     (list_append rawctyplist curcty)
+     )
+    (debug "runtypesupport_docmd rawctyplist=" rawctyplist)
+    (let ( (sortedctygtytuple 
+	    (multiple_sort (list_to_multiple rawctypgtylist discr_multiple)
+			   compare_named_alpha discr_multiple)) 
+	   (sortedctytuple 
+	    (multiple_sort (list_to_multiple rawctyplist discr_multiple)
+			   compare_named_alpha discr_multiple))
+	   (rawvaldesctuple  
+	    (list_to_multiple (retrieve_value_descriptor_list)))
+	   (sortedvaldesctuple
+	    (multiple_sort rawvaldesctuple
+			   compare_named_alpha discr_multiple))
+	   )
+      (debug "runtypesupport_docmd sortedctygtytuple=" sortedctygtytuple 
+	     " sortedvaldesctuple=" sortedvaldesctuple) 
+      ;;
+      ;; generate the enummagic ie the MELTOBMAG_* enumeration
+      (generate_runtypesupport_enum_objmagic sortedctygtytuple 
+					     sortedvaldesctuple
+					     outarg outdeclbuf)
+      ;; generate the structures
+      (generate_runtypesupport_gty sortedctygtytuple sortedvaldesctuple
+				   outarg outdeclbuf) 
+      ;; generate the parameters support for every ctype, even the non
+      ;; GTY-ed ones!
+      (generate_runtypesupport_param sortedctytuple sortedvaldesctuple
+				     outarg outdeclbuf) 
+      ;; generate the melt_code_to_ctype support function
+      (generate_runtypesupport_cod2ctype sortedctytuple sortedvaldesctuple
+					 outarg outcodebuf) 
+      (add2sbuf_indentnl outdeclbuf 0)
+      (add2sbuf_strconst outdeclbuf "melt_ptr_t melt_code_to_ctype (int);")
+      (add2sbuf_indentnl outdeclbuf 0)
+      ;; generate the magic to string function
+      (generate_runtypesupport_mag2str sortedctytuple sortedvaldesctuple
+				       outarg outdeclbuf outcodebuf) 
+      ;; generate the melt_forwarded_copy funtion
+      (generate_runtypesupport_forwcopy_fun sortedctygtytuple 
+					    sortedvaldesctuple
+					    outarg outcodebuf)
+      ;; generate the melt_scanning function
+      (generate_runtypesupport_scanning sortedctygtytuple
+					sortedvaldesctuple
+					outarg outcodebuf)
+      ;; generate the melt box related functions
+      (generate_runtypesupport_boxingfun sortedctygtytuple outarg
+					 outdeclbuf outcodebuf) 
+      ;; generate the meltgc_clone_with_discriminant funtion
+      (generate_runtypesupport_cloning_fun sortedctygtytuple 
+					   sortedvaldesctuple
+					   outarg outcodebuf)
+      ;; generate the inlined melt map functions
+      (generate_runtypesupport_mapfun sortedctygtytuple outarg outdeclbuf)
+      ;; generate the predefined fields
+      (generate_runtypesupport_predef_fields outdeclbuf)
+      ;; generate the predefined hooks
+      (generate_runtypesupport_predefined_hooks outdeclbuf outcodebuf)
+      ;;;;;;;;;;;;;;;;;;
+      ;; add a terminating comment and write the files
+      ;;
+      ;;; generated declaration
+      (code_chunk termcommentdeclchk 
+		  #{ /* runtypesupport_docmd $TERMCOMMENTDECLCHK */ {
+		  time_t nowdecl = 0;
+		  char decldatebuf[48];
+		  memset (decldatebuf, 0, sizeof(decldatebuf));
+		  time(&nowdecl);
+		  strftime (decldatebuf, sizeof(decldatebuf)-1,
+			    "%Y %b %d", localtime(&nowdecl));
+		  meltgc_out_printf ((melt_ptr_t) $OUTDECLBUF,
+				     "\n/*** End of declaration file %s generated on %s\n"
+				     " * by GCC MELT %s . ***/\n",
+				     melt_string_str((melt_ptr_t) $OUTDECLNAME),
+				     decldatebuf, melt_gccversionstr);
+		  } /* end  $TERMCOMMENTDECLCHK runtypesupport_docmd */}#)
+      (output_sbuf_strval outdeclbuf outdeclname)
+      (informsg_strv "generated runtype support declaration file" outdeclname)
+      ;;; generated code
+      (code_chunk 
+       termcommentcodechk 
+       #{ /* runtypesupport_docmd $TERMCOMMENTCODECHK */ {
+       time_t nowcode = 0;
+       char codedatebuf[48];
+       memset (codedatebuf, 0, sizeof(codedatebuf));
+       time(&nowcode);
+       strftime (codedatebuf, sizeof(codedatebuf)-1,
+			      "%Y %b %d", localtime(&nowcode));
+       meltgc_out_printf ((melt_ptr_t) $OUTCODEBUF,
+			  "\n/*** End of code file %s generated on %s\n"
+			  " * by GCC MELT %s . ***/\n",
+			  melt_string_str((melt_ptr_t) $OUTCODENAME),
+			  codedatebuf, melt_gccversionstr);
+       } /* end  $TERMCOMMENTCODECHK runtypesupport_docmd*/}#)
+      (output_sbuf_strval outcodebuf outcodename)
+      (informsg_strv "generated runtype support implementation file" outcodename)
+      ;;
+      (debug "runtypesupport_docmd done outarg=" outarg)
+      (return :true)			;mode success
+      )))
+
+;;;;;;;;;;;;;;;;
+(definstance runtypesupport_mode
+  class_melt_mode
+  :named_name '"runtypesupport"
+  :meltmode_help '"generate runtime support for our GTY types (ctypes, values);\n
+\t OUTPUT=generated file prefix"
+  :meltmode_fun runtypesupport_docmd
+)
+(install_melt_mode runtypesupport_mode)
+
+
+;;;;;;;;;;;;;;;;
+
+;; utility function to translate something to various flavors of modules
+(defun translate_to_flavored_module (inarg outarg carg flavors curenv)
+  (debug "translate_to_flavored_module inarg=" inarg 
+	 " outarg=" outarg " carg=" carg " flavors=" flavors " curenv=" curenv)
+  (let ( 
+	(basnam
+	 (cond
+	  ( (is_string outarg)
+	    (make_string_without_suffix discr_string outarg ".cc"))
+	  ( (is_string inarg) 
+	    (make_string_nakedbasename discr_string inarg))
+	  (:else 
+	   (errormsg_plain "invalid translate to flavored module arguments")
+	   (return)))
+	 )
+	(outnam (or outarg basnam))
+	(rawsrcnam (or (make_string_without_suffix discr_string carg ".cc")
+		       (make_string_nakedbasename discr_string outnam)))
+	(outbase (make_string_without_suffix discr_string outnam  ".cc"))
+	)
+    (assert_msg "check curenv" (is_a curenv class_environment) curenv)
+    (debug "translate_to_flavored_module basnam=" basnam 
+	   " rawsrcnam=" rawsrcnam " outbase=" outbase)
+    (translate_to_cc_module_melt_sources inarg outbase curenv)
+    (cond 
+     ( (is_string flavors)
+       (debug "before generate_flavored_melt_module rawsrcnam=" rawsrcnam " outnam=" outnam
+	      "flavor=" flavors)
+       (generate_flavored_melt_module rawsrcnam outnam flavors))
+     ( (is_list flavors)
+       (foreach_pair_component_in_list
+	(flavors)
+	(curpair curflavor)
+	(debug "before generate_flavored_melt_module rawsrcnam=" rawsrcnam " outnam=" outnam
+	       "flavor=" curflavor)
+	(generate_flavored_melt_module rawsrcnam outnam curflavor)))
+     ( (is_multiple flavors)
+       (foreach_in_multiple
+	(flavors)
+	(curflavor :long flix)
+	(debug "before generate_flavored_melt_module rawsrcnam=" rawsrcnam " outnam=" outnam
+	       "flavor=" curflavor " flix=" flix)
+	(generate_flavored_melt_module rawsrcnam outnam curflavor)))
+     (:else
+      (debug "translate_to_flavored_module bad flavors=" flavors)
+      (assert_msg "invalid flavors" () flavors)
+      )
+     )))
+
+(defun translatetomodule_docmd (cmd moduldata)
+  (message_dbg "starting translatetomodule_docmd")
+  (debug "start translatetomodule_docmd cmd=" cmd " moduldata=" moduldata)
+  (let ( 
+	(parmodenv (parent_module_environment))
+	(curenv (if moduldata moduldata initial_environment))
+	(inarg (make_stringconst discr_string (melt_argument "arg")))
+	(outarg (make_stringconst discr_string (melt_argument "output")))
+	(coutarg (make_stringconst discr_string (melt_argument "coutput")))
+	)
+    (debug "translatetomodule_docmd inarg=" inarg " outarg=" outarg
+	   " coutarg=" coutarg " curenv=" curenv)
+    (translate_to_flavored_module inarg outarg coutarg
+				  (tuple '"quicklybuilt" '"optimized" '"debugnoline")
+				  curenv) 
+    (return :true)			;succeed the mode
+    ))
+
+(definstance translatetomodule_mode
+  class_melt_mode
+  :named_name '"translatetomodule"
+  :meltmode_help '"translate a .melt file to MELT_DYNLOADED_SUFFIX modules in quicklybuilt, optimized, debugnoline flavors;\n
+\t ARGUMENT= input file; OUTPUT= generated module with MELT_DYNLOADED_SUFFIX; OUTPUTC= generated *.cc file."
+  :meltmode_fun translatetomodule_docmd
+)
+(install_melt_mode translatetomodule_mode)
+
+;;;;;;;;;;;;;;;;
+
+(defun translatedebug_docmd (cmd moduldata)
+  (debug "start translatedebug_docmd cmd=" cmd " moduldata=" moduldata)
+  (let ( 
+	(parmodenv (parent_module_environment))
+	(curenv (if moduldata moduldata initial_environment))
+	(inarg (make_stringconst discr_string (melt_argument "arg")))
+	(outarg (make_stringconst discr_string (melt_argument "output")))
+	(coutarg (make_stringconst discr_string (melt_argument "coutput")))
+	)
+    (debug "translatedebug_docmd inarg=" inarg " outarg=" outarg
+	   " coutarg=" coutarg " curenv=" curenv)
+    (translate_to_flavored_module inarg outarg coutarg '"debugnoline" curenv))
+  (return :true)			;succeed the mode
+  )
+
+(definstance translatedebug_mode
+  class_melt_mode
+  :named_name '"translatedebug"
+  :meltmode_help '"translate a .melt file to .debugnoline module for low-level
+debug, including gdb;\n
+\t ARGUMENT= input file; OUTPUT= generated module with MELT_DYNLOADED_SUFFIX; COUTPUT= generated *.cc file\n
+\t generates also *.cc and no MELT line number;\n
+\t Useful for running gdb on the module. MELT debugging (DEBUG,
+ASSERT_MSG) is enabled"
+  :meltmode_fun translatedebug_docmd
+)
+(install_melt_mode translatedebug_mode)
+
+;;;;;;;;;;;;;;;;
+(defun translatequickly_docmd (cmd moduldata)
+  (debug "start translatequickly_docmd cmd=" cmd " moduldata=" moduldata)
+  (let ( 
+	(parmodenv (parent_module_environment))
+	(curenv (if moduldata moduldata initial_environment))
+	(inarg (make_stringconst discr_string (melt_argument "arg")))
+	(outarg (make_stringconst discr_string (melt_argument "output")))
+	(coutarg (make_stringconst discr_string (melt_argument "coutput")))
+	)
+    (debug "translatequickly_docmd inarg=" inarg " outarg=" outarg
+	   " coutarg=" coutarg " curenv=" curenv)
+    (translate_to_flavored_module inarg outarg coutarg '"quicklybuilt" curenv)
+    (return :true) ;;; succeed the mode
+    ))
+
+
+
+(definstance translatequickly_mode
+  class_melt_mode
+  :named_name '"translatequickly"
+  :meltmode_help '"translate quickly a .melt file to .quicklybuilt module with MELT debugging enabled (DEBUG, ASSERT_MSG...);\n
+\t ARGUMENT= input file; OUTPUT= generated module with MELT_DYNLOADED_SUFFIX; COUTPUT= generated *.cc file\n."
+  :meltmode_fun translatequickly_docmd
+)
+(install_melt_mode translatequickly_mode)
+
+
+;;;;;;;;;;;;;;;;
+(defun translateoptimized_docmd (cmd moduldata)
+  (debug "start translateoptimized_docmd cmd=" cmd " moduldata=" moduldata)
+  (let ( 
+	(parmodenv (parent_module_environment))
+	(curenv (if moduldata moduldata initial_environment))
+	(inarg (make_stringconst discr_string (melt_argument "arg")))
+	(outarg (make_stringconst discr_string (melt_argument "output")))
+	(coutarg (make_stringconst discr_string (melt_argument "coutput")))
+	)
+    (debug "translateoptimized_docmd inarg=" inarg " outarg=" outarg
+	   " coutarg=" coutarg " curenv=" curenv)
+    (translate_to_flavored_module inarg outarg coutarg '"optimized" curenv)
+    (return :true) ;;succeed the mode
+    ))
+
+
+
+(definstance translateoptimized_mode
+  class_melt_mode
+  :named_name '"translateoptimized"
+  :meltmode_help '"translate  a .melt file to an .optimized module without MELT debugging\n
+\t ARGUMENT= input file; OUTPUT= generated module with MELT_DYNLOADED_SUFFIX; COUTPUT= generated *.cc file\n."
+  :meltmode_fun translateoptimized_docmd
+)
+(install_melt_mode translateoptimized_mode)
+
+
+;;;;;;;;;;;;;;;;
+;;;;;
+(defun translatefile_docmd (cmd moduldata)
+  (message_dbg "starting translatefile_docmd")
+  (debug "start translatefile_docmd cmd=" cmd " moduldata=" moduldata)
+  (let ( 
+	(parmodenv (parent_module_environment))
+	(curenv (if moduldata moduldata initial_environment))
+	(inarg (make_stringconst discr_string (melt_argument "arg")))
+	(outarg (make_stringconst discr_string (melt_argument "output")))
+	)
+    (debug "translatefile_docmd inarg=" inarg " outarg=" outarg 
+	   " parmodenv=" parmodenv 
+	   " initial_environment=" initial_environment)
+    (assert_msg "check curenv" (is_a curenv class_environment) curenv)
+    (let ( (basnam (cond
+		    ( (is_string outarg) 
+		      (make_string_without_suffix discr_string outarg ".cc")
+		      )
+		    ( (is_string inarg)
+		      (if (not (string_suffixed inarg ".melt"))
+			  (warningmsg_strv "MELT translated input file without .melt suffix" 
+					   inarg))
+		      (make_string_nakedbasename discr_string inarg))
+		    (:else
+		     (errormsg_plain "invalid translatefile mode")
+		     (return)
+		     )))
+	   )
+    (debug "translatefile_mode basnam" basnam)
+    (if (or (string_dynloaded_suffixed basnam)
+	    (string_suffixed basnam ".melt")
+	    (string_suffixed basnam ".o")
+	    (string_suffixed basnam ".c")
+	    (string_suffixed basnam ".cc"))
+	(progn 	  
+	  (errormsg_strv "tranlatefile mode needs a base name without suffix" 
+		       basnam)
+	  (return)			;fail the mode
+	  ))
+      (translate_to_cc_module_melt_sources inarg basnam curenv)
+      (return :true)			;succeed the mode
+      )))
+
+
+(definstance translatefile_mode
+  class_melt_mode
+  :named_name '"translatefile"
+  :meltmode_help '"translate a .melt file to .cc;\n
+\t ARGUMENT= input file; OUTPUT= generated C++ file"
+  :meltmode_fun translatefile_docmd
+)
+(install_melt_mode translatefile_mode)
+
+
+
+;;;;;;;;;;;;;;;;
+(defun translateinit_docmd (cmd moduldata)
+  (debug "start translateinit_mode cmd=" cmd " moduldata=" moduldata
+	 " initial_environment=" initial_environment)
+  (let ( (rlist (make_list discr_list))
+	 (:cstring progarg (melt_argument "arg"))
+	 (:cstring progarglist (melt_argument "arglist"))
+	 (inarg
+	  (cond ( progarg 
+		  (let ( (progargstr (make_stringconst discr_string progarg))
+			 )
+		    (if (not (string_suffixed progargstr ".melt"))
+			(warningmsg_strv "MELT translated initial file without .melt suffix" 
+					 progargstr))
+		    progargstr))
+		( progarglist
+		  (split_string_comma discr_string (make_stringconst discr_string progarglist))
+		  )
+		(:else
+		 (error_at () "invalid arg $1 or arglist $2 to translateinit mode" progarg progarglist)
+		 (return))))
+	 (outarg (make_stringconst discr_string (melt_argument "output")))
+	 (basnam (cond
+		  ( (is_string outarg) outarg)
+		  ( (is_string inarg) (make_string_nakedbasename discr_string inarg))
+		  (:else
+		   (error_at () "invalid translateinit mode inarg $1 outarg $2" inarg outarg)
+		   (return)
+		   )))
+	 )
+    (debug "translateinit_mode basnam=" basnam)
+    (if (or (string_dynloaded_suffixed basnam)
+	    (string_suffixed basnam ".melt")
+	    (string_suffixed basnam ".c")
+	    (string_suffixed basnam ".cc"))
+	(progn 
+	  (error_at () "tranlateinit mode needs a base name $1 without suffix" 
+			 basnam)
+	  (return)
+	  ))
+    (cond 
+     ((is_string inarg) 
+      (list_append2list rlist (read_file inarg)))
+     ((is_list inarg)
+      (list_every inarg 
+		  (lambda (curarg)
+		    (inform_at () "translateinit reading from file $1" curarg)
+		    (let ( (curead (read_file curarg))
+			   )
+		      (assert_msg "check rlist" (is_list rlist) rlist)
+		      (assert_msg "check curead" (is_list_or_null curead) curead)
+		      (debug "translateinit_mode curead=" curead)
+		      (list_append2list rlist curead)))))
+     )
+    (debug "after read translateinit_mode rlist=" rlist)
+    ;; special magic for the initial first file
+    (compile_first_bootstrap_list_sexpr rlist basnam)
+    ;; we trigger explicitly a full GC to stress the runtime. The
+    ;; translateinit mode is not useful to the casual user.
+    (full_garbcoll 10000)
+    (return :true)			;mode succeed
+    ))
+
+;;;
+(definstance translateinit_mode
+  class_melt_mode
+  :named_name '"translateinit"
+  :meltmode_help '"translate the very first (warmelt-first.melt) file for bootstrapping;\n
+\t useful only at MELT installation! ARGUMENT= input file; OUTPUT= generated file."
+  :meltmode_fun translateinit_docmd
+)
+(install_melt_mode translateinit_mode)
+
+
+
+;;;;;;;;;;;;;;;;
+
+(defun translateinit_flavored (flavor)
+  (let ( (rlist (make_list discr_list))
+	 (:cstring progarg (melt_argument "arg"))
+	 (:cstring progarglist (melt_argument "arglist"))
+	 (inarg
+	  (cond ( progarg 
+		  (let ( (progargstr (make_stringconst discr_string progarg))
+			 )
+		    (if (not (string_suffixed progargstr ".melt"))
+			(warningmsg_strv "MELT translated initial file without .melt suffix" 
+					 progargstr))
+		    progargstr))
+		( progarglist
+		  (split_string_comma discr_string (make_stringconst discr_string progarglist))
+		  )
+		(:else
+		 (errormsg_plain "invalid arg or arglist to translateinitmodule mode")
+		 (return))))
+	 (outarg (make_stringconst discr_string (melt_argument "output")))
+	 (basnam (cond
+		  ( (is_string outarg) outarg)
+		  ( (is_string inarg) (make_string_nakedbasename discr_string inarg))
+		  (:else
+		   (errormsg_plain "invalid translateinitmodule mode")
+		   (return)
+		   )))
+	 )
+    (debug "translateinitmodule_flavored basnam=" basnam " flavor=" flavor)
+    (if (or (string_dynloaded_suffixed basnam)
+	    (string_suffixed basnam ".melt")
+	    (string_suffixed basnam ".c")
+	    (string_suffixed basnam ".cc"))
+	(progn 
+	  (errormsg_strv "tranlateinit mode needs a base name without suffix" 
+			 basnam)
+	  (return)
+	  ))
+    (cond 
+     ((is_string inarg) 
+      (list_append2list rlist (read_file inarg)))
+     ((is_list inarg)
+      (list_every inarg 
+		  (lambda (curarg)
+		    (informsg_strv "reading from file" curarg)
+		    (let ( (curead (read_file curarg))
+			   )
+		      (assert_msg "check rlist" (is_list rlist) rlist)
+		      (assert_msg "check curead" (is_list_or_null curead) curead)
+		      (debug "translateinitmodule_flavored curead=" curead)
+		      (list_append2list rlist curead)))))
+     )
+    (debug "after read translateinitmodule_flavored rlist=" rlist)
+    ;; we pass a null initial environment, so that
+    ;; MELT_HAS_INITIAL_ENVIRONMENT is emitted as 0
+    (compile_list_sexpr rlist () basnam)
+    ;; we trigger explicitly a full GC to stress the runtime. The
+    ;; translateinitmodule mode is not useful to the casual user.
+    (full_garbcoll 10000)
+    (let ( 
+	  (outbase (or outarg basnam))
+	  )
+      (cond
+       ((is_multiple flavor)
+	(foreach_in_multiple 
+	 (flavor)
+	 (curflavor :long flavix)
+	 (debug "translateinitmodule_flavored before module generation basnam=" basnam 
+		" outbase=" outbase " curflavor=" curflavor)
+	 (generate_flavored_melt_module basnam outbase curflavor)
+	 (debug "translateinitmodule_flavored after module generation basnam=" basnam 
+		" outbase=" outbase " curflavor=" curflavor)
+	 )
+	)
+       ((is_string flavor)
+	(debug "translateinitmodule_flavored before module generation basnam=" basnam 
+	       " outbase=" outbase " flavor=" flavor)
+	(generate_flavored_melt_module basnam outbase flavor)
+	(debug "translateinitmodule_flavored after module generation basnam=" basnam 
+	       " outbase=" outbase " flavor=" flavor)
+	)
+       (:else
+	(debug "translateinitmodule_flavored bad flavor=" flavor)
+	(errormsg_plain "bad flavor for translating initial module")
+	(assert_msg "translateinitmodule_flavored bad flavor" () flavor))
+       )
+      )
+    )
+  )
+
+;; translate the initial module in all 3 flavors: 
+(defun translateinitmodule_docmd (cmd moduldata)
+  (debug "start translateinitmodule_mode cmd=" cmd " moduldata=" moduldata
+	 " initial_environment=" initial_environment)
+  (translateinit_flavored (tuple '"quicklybuilt" '"debugnoline" '"optimized"))
+  )
+
+
+;; three modes for each flavor of init module
+;;;
+(definstance translateinitmodule_mode
+  class_melt_mode
+  :named_name '"translateinitmodule"
+  :meltmode_help '"translate the very first *.melt file into quicklybuilt, optimized, debugnoline falvors of modules;\n
+\t useful only at MELT installation! ARGUMENT= input file; OUTPUT= generated module base."
+  :meltmode_fun translateinitmodule_docmd
+)
+(install_melt_mode translateinitmodule_mode)
+
+
+;; translate the initial module quicklybuilt: 
+(defun translateinitmodulequicklybuilt_docmd (cmd moduldata)
+  (debug "start translateinitmodulequicklybuild_mode cmd=" cmd " moduldata=" moduldata
+	 " initial_environment=" initial_environment)
+  (translateinit_flavored '"quicklybuilt")
+  )
+
+;;;
+(definstance translateinitmodulequicklybuilt_mode
+  class_melt_mode
+  :named_name '"translateinitmodulequicklybuilt"
+  :meltmode_help '"translate the very first *.melt file into quicklybuilt module;\n
+\t useful only at MELT installation! ARGUMENT= input file; OUTPUT= generated module base."
+  :meltmode_fun translateinitmodulequicklybuilt_docmd
+)
+(install_melt_mode translateinitmodulequicklybuilt_mode)
+
+
+;; translate the initial module debugnoline: 
+(defun translateinitmoduledebugnoline_docmd (cmd moduldata)
+  (debug "start translateinitmodulequicklybuild_mode cmd=" cmd " moduldata=" moduldata
+	 " initial_environment=" initial_environment)
+  (translateinit_flavored '"debugnoline")
+  )
+
+;;;
+(definstance translateinitmoduledebugnoline_mode
+  class_melt_mode
+  :named_name '"translateinitmoduledebugnoline"
+  :meltmode_help '"translate the very first *.melt file into debugnoline module;\n
+\t useful only at MELT installation! ARGUMENT= input file; OUTPUT= generated module base."
+  :meltmode_fun translateinitmoduledebugnoline_docmd
+)
+(install_melt_mode translateinitmoduledebugnoline_mode)
+
+
+;; translate the initial module optimized: 
+(defun translateinitmoduleoptimized_docmd (cmd moduldata)
+  (debug "start translateinitmodulequicklybuild_mode cmd=" cmd " moduldata=" moduldata
+	 " initial_environment=" initial_environment)
+  (translateinit_flavored '"optimized")
+  )
+
+;;;
+(definstance translateinitmoduleoptimized_mode
+  class_melt_mode
+  :named_name '"translateinitmoduleoptimized"
+  :meltmode_help '"translate the very first *.melt file into optimized module;\n
+\t useful only at MELT installation! ARGUMENT= input file; OUTPUT= generated module base."
+  :meltmode_fun translateinitmoduleoptimized_docmd
+)
+(install_melt_mode translateinitmoduleoptimized_mode)
+
+
+
+
+
+;;;;
+;; eof warmelt-modes.melt

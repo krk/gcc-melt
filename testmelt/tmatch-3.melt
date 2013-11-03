@@ -1,0 +1,46 @@
+;; -*- lisp -*-
+;; file tmatch-3.melt
+
+#| run in buildir/gcc
+ ./cc1 -fmelt=translatefile  -fmelt-module-path=.    -fmelt-source-path=.:...melt-source \
+    -fmelt-compile-script=./built-melt-cc-script \
+    -fmelt-tempdir=/tmp -fmelt-init=@warmelt2 \
+    -fmelt-arg=..../tmatch-3.melt -fmelt-debug
+|#
+
+(defprimitive tree_content (v) :tree
+  "(melt_tree_content((melt_ptr_t)(" v ")))")
+
+;; pattern (tree_function_decl <funame>) match a tree for a function
+;; declaration
+(defcmatcher tree_function_decl 
+  (:tree tr) 				;matched
+  ;; output 
+  (:cstring funame
+   :tree initialdcl
+   )
+  treefun				;state symbol
+  (; test expansion
+   "((" tr ") && TREECODE(" tr ") == FUNCTION_DECL)"
+   )
+  (;; fill expansion
+   funame "=NULL; "
+   initialdcl "=NULL; "
+   "if (DECL_NAME(" tr ")) "
+   funame "= IDENTIFIER_POINTER(DECL_NAME(" tr ")); "
+   initialdcl  "=DECL_INITIAL(" tr "); "
+   )
+)
+
+(defprimitive debugtree (:cstring msg :tree tr) :void
+  " do{debugeprintf(\"debugtree %s @%p\", " msg ", (void*)" tr ");"
+  "if (flag_melt_debug) debug_tree(" tr ");}while(0) "
+)
+
+(defun tmatch_tree (declv)
+  (match 
+   (tree_content declv)
+   ( ?(tree_function_decl ?funam ?initree)
+      (debugtree "tmatchinitree" initree)
+      )
+   ))

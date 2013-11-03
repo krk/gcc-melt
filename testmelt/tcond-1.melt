@@ -1,0 +1,23 @@
+;; -*- lisp -*-
+;; file tcond-1.melt
+
+#| run in buildir/gcc
+ ./cc1 -fmelt=translatefile -fmelt-dynlibdir=. \
+    -fmelt-compile-script=built-melt-cc-script \
+    -fmelt-gensrcdir=. -fmelt-tempdir=/tmp -fmelt-init=@warmelt2 \
+    -fmelt-arg=..../tcond-1.melt -fmelt-debug; indent tcond-1.c; ./built-melt-cc-script -n tcond-1.c
+|#
+
+;; this exercise a bug in rev143769
+;; the bug is corrected in rev143870 (or before)
+;; the is_list test is compiled outside of an if.
+;; gcc compilation of tcond-1.c gives a warning value computed is not used
+(defun tcond_aa (m l)
+  (foreach_in_multiple 
+   (m)
+   (x :long jx)
+   (if 
+       (is_list x)
+       (list_append2list l x)
+     (list_append l x)
+     )))

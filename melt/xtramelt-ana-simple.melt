@@ -1,0 +1,944 @@
+;; -*- Lisp -*-
+;; file xtramelt-ana-simple.melt
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(comment "***
+    (C) Copyright 2009 - 2013  Free Software Foundation, Inc.
+    Contributed by Basile Starynkevitch <basile@starynkevitch.net>
+
+    This file is part of GCC.
+
+    GCC is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 3, or (at your option)
+    any later version.
+
+    GCC is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with GCC; see the file COPYING3.  If not see
+    <http://www.gnu.org/licenses/>.
+***")
+
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; a pass to test that all relevant cmatcher-s are eough to scan a source program
+(defclass class_justscan_data 
+  :super class_proped
+  :fields (juscan_pass 
+	   juscan_data
+	   juscan_fundecl		;boxed current function decl tree
+	   juscan_curbb			;boxed current basic block
+	   ))
+
+(defun justscan_tree (jsdata :tree t)
+  (if t
+      (match 
+       t
+       (?(tree_function_decl ?_ ?tfinit)
+	 (if tfinit (justscan_tree jsdata tfinit)))
+       (?(tree_of_type ?ttyp)
+	 (if ttyp (justscan_tree jsdata ttyp)))
+       (?(tree_var_decl ?_ ?_ ?_)
+	 )
+       (?(tree_block ?tvars ?tsublocks)
+	 (if tvars (justscan_tree jsdata tvars))
+	 (if tsublocks (justscan_tree jsdata tsublocks))
+	 )
+       (?(tree_parm_decl ?tptyp ?tpdecl)
+	 (if tptyp (justscan_tree jsdata tptyp))
+	 (if tpdecl (justscan_tree jsdata tpdecl))
+	 )
+       (?(tree_decl ?tdecl ?_ ?_)
+	 (if tdecl (justscan_tree jsdata tdecl)))
+       (?(tree_integer_type ?_ ?_ ?_ ?_)
+	 )
+       (?(tree_integer_cst ?_)
+	 )
+       (?(tree_ssa_name ?tvar ?tvalu ?_ ?defg)
+	 (if tvar (justscan_tree jsdata tvar))
+	 (if tvalu (justscan_tree jsdata tvalu))
+	 (if defg (justscan_gimple jsdata defg))
+	 )
+       (?_
+	(debug "unhandled tree" t)
+	(warning_at_tree t "unhandled tree by justscan")
+	(warning_at_tree (tree_content (get_field :juscan_fundecl jsdata)) "justscan function decl")
+	(assert_msg "unhandled tree justscan" ())
+	)))
+  )
+
+(defun justscan_gimple (jsdata :gimple g)
+  (if g
+      (match 
+       g
+       (?(gimple_assign_single ?lhs ?rhs)
+	 (justscan_tree jsdata lhs)
+	 (justscan_tree jsdata rhs)
+	 )
+       (?(gimple_assign_cast ?lhs ?rhs)
+	 (justscan_tree jsdata lhs)
+	 (justscan_tree jsdata rhs)
+	 )
+       (?(gimple_assign_copy ?lhs ?rhs)
+	 (justscan_tree jsdata lhs)
+	 (justscan_tree jsdata rhs)
+	 )
+       (?(gimple_assign_ssa_name_copy ?lhs ?rhs)
+	 (justscan_tree jsdata lhs)
+	 (justscan_tree jsdata rhs)
+	 )
+       (?(gimple_assign_unary_nop ?lhs ?rhs)
+	 (justscan_tree jsdata lhs)
+	 (justscan_tree jsdata rhs)
+	 )
+       (?(gimple_assign_plus ?lhs ?rhs1 ?rhs2)
+	 (justscan_tree jsdata lhs)
+	 (justscan_tree jsdata rhs1)
+	 (justscan_tree jsdata rhs2)
+	 )
+       (?(gimple_assign_minus ?lhs ?rhs1 ?rhs2)
+	 (justscan_tree jsdata lhs)
+	 (justscan_tree jsdata rhs1)
+	 (justscan_tree jsdata rhs2)
+	 )
+       (?(gimple_assign_pointerplus ?lhs ?rhs1 ?rhs2)
+	 (justscan_tree jsdata lhs)
+	 (justscan_tree jsdata rhs1)
+	 (justscan_tree jsdata rhs2)
+	 )
+       (?(gimple_assign_mult ?lhs ?rhs1 ?rhs2)
+	 (justscan_tree jsdata lhs)
+	 (justscan_tree jsdata rhs1)
+	 (justscan_tree jsdata rhs2)
+	 )
+       (?(gimple_assign_trunc_div ?lhs ?rhs1 ?rhs2)
+	 (justscan_tree jsdata lhs)
+	 (justscan_tree jsdata rhs1)
+	 (justscan_tree jsdata rhs2)
+	 )
+       (?(gimple_assign_ceil_div ?lhs ?rhs1 ?rhs2)
+	 (justscan_tree jsdata lhs)
+	 (justscan_tree jsdata rhs1)
+	 (justscan_tree jsdata rhs2)
+	 )
+       (?(gimple_assign_floor_div ?lhs ?rhs1 ?rhs2)
+	 (justscan_tree jsdata lhs)
+	 (justscan_tree jsdata rhs1)
+	 (justscan_tree jsdata rhs2)
+	 )
+       (?(gimple_assign_round_div ?lhs ?rhs1 ?rhs2)
+	 (justscan_tree jsdata lhs)
+	 (justscan_tree jsdata rhs1)
+	 (justscan_tree jsdata rhs2)
+	 )
+       (?(gimple_assign_rdiv ?lhs ?rhs1 ?rhs2)
+	 (justscan_tree jsdata lhs)
+	 (justscan_tree jsdata rhs1)
+	 (justscan_tree jsdata rhs2)
+	 )
+       (?_
+	(debug "unhandled gimple" g)
+	(warning_at_gimple g "unhandled gimple by justscan")
+	(warning_at_tree (tree_content (get_field :juscan_fundecl jsdata)) "justscan function decl")
+	(assert_msg "unhandled gimple justscan" ())
+	)
+       )
+    ))
+
+(defun justscan_bb (jsdata :basic_block bb)
+  (debug "justscan_bbdcl  start jsdata=" jsdata " bb=" bb)
+  (if bb
+      (let ( (oldbb (get_field :juscan_curbb jsdata)) )
+	(put_fields jsdata :juscan_curbb (make_basicblock discr_basic_block bb))
+	(eachgimple_in_basicblock 
+	 (bb)
+	 (:gimple g)
+	 (justscan_gimple jsdata bb)
+	 )
+	(put_fields jsdata :juscan_curbb oldbb)
+	)))
+
+
+(defun justscanpass_gate  (pass)
+  (debug "justscanpass_gate at start pass=" pass)
+  ;; retrieve the data associated to the cfun in the pass. If it
+  ;; exists (i.e. is not null) we avoid running the pass again
+  (let ( (grdata (maptree_get (get_field :gccpass_data pass) (cfun_decl))) )
+    (debug "justscanpass_gate cfundecl=" (cfun_decl) " grdata=" grdata)
+    (if grdata 
+	() ;; return null, so avoid executing the pass
+      pass)
+    ))
+
+(defun justscanpass_exec (pass)
+  (debug "justscanpass_exec at start pass=" pass)
+  (code_chunk dbgcfun #{ /* $dbgcfun :: */
+	      debugeprintf("justscanpass_exec start cfun=%p cfg=%p", 
+			   (void*)cfun, cfun?cfun->cfg:NULL) ; 
+	      }#) 
+  (assert_msg "justscanpass_exec check cfun has cfg" (cfun_has_cfg))
+  (let ( (jsdata (instance class_justscan_data 
+			   :juscan_pass pass
+			   )) )
+    ;; add our grdata associated to the cfun_decl in the pass data,
+    ;; hence the gate will avoid running the pass twice
+    (maptree_put (get_field :gccpass_data pass) (cfun_decl) jsdata)
+    (justscan_tree jsdata (cfun_decl))
+    ;; gimple ssa passes have a cfg..
+    (each_bb_cfun 
+     ()
+     (:basic_block bb :tree fundecl)
+     (put_fields jsdata :juscan_fundecl (make_tree discr_tree fundecl))
+     (if bb (justscan_bb jsdata bb))
+     )
+    (debug "justscanpass_exec final jsdata=" jsdata)
+    )
+  )
+
+;;;;;;;;;;;;;;;;
+;;; our just scan mode -fmelt=justscan
+(defun justscan_docmd (cmd moduldata)
+  (let ( (justscanpass
+	  (instance class_gcc_gimple_pass
+		    :named_name '"melt_justscanpass"
+		    :gccpass_gate justscanpass_gate
+		    :gccpass_exec justscanpass_exec
+		    :gccpass_data (make_maptree discr_map_trees 100)
+		    :gccpass_properties_required ()
+	      ))
+        )
+  (install_melt_pass_in_gcc justscanpass :after '"cp" 0) ;; interprocedural constant propagation
+  (debug  "justscan_mode installed pass=" justscanpass)
+  (return cmd)			;return non-nil to continue compilation
+  ))
+
+
+
+(definstance justscan_mode
+  class_melt_mode
+  :named_name '"justscan"
+  :meltmode_help '"install a pass scanning all the code"
+  :meltmode_fun justscan_docmd
+)
+(install_melt_mode justscan_mode)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; a pass to help write MELT code in C.
+;; it checks that the meltfram__ structure is correctly dimensionned.
+
+(defclass class_melt_frame_data 
+  :super class_root
+  :fields (meltfram_funcount
+	   ))
+
+(defun meltframe_gate (pass)
+  (debug "meltframe_gate at start pass=" pass)
+  (shortbacktrace_dbg "meltframe_gate" 15)
+  (with_cfun_decl
+   ()
+   (:tree cfundecl)
+   (debug "meltframe_gate cfundecl=" cfundecl)
+   (match cfundecl
+	  ;; melt-runtime.c has some garbage collecting MELT functions  containing meltgc_
+	  ( ?(tree_function_decl_named ?(cstring_containing "meltgc_") ?_)
+	     (void)
+	     )
+	  ;; MELT generated routines start with meltrout_
+	  ( ?(tree_function_decl_named ?(cstring_prefixed "meltrout_") ?_)
+	     (void)
+	     )
+	  ( ?(tree_function_decl_named ?(cstring_same "melt_start_this_module") ?_)
+	     (void)
+	     )
+	  (?_
+	   (return ())
+	   )
+	  )
+   (let ( (meltdata (get_field :gccpass_data pass))
+	  (meltfuncountb (get_field :meltfram_funcount meltdata))
+	  )
+     (assert_msg "check meltfuncountb" (is_integerbox meltfuncountb))
+     (put_int meltfuncountb (+i 1 (get_int meltfuncountb)))
+     )
+   (return :true)
+   )
+  )
+
+
+(defun meltframe_update_tuple_ptr  (tup :long ix :gimple g)
+  (let ( (curlist (multiple_nth tup ix))
+	 )
+    (if (is_list curlist)
+	(list_append curlist (make_gimple discr_gimple g))
+      (let ( (newlist (list (make_gimple discr_gimple g))) 
+	     )
+	(multiple_put_nth tup ix newlist)
+	))))
+
+(defun meltframe_exec (pass)
+  (debug "meltframe_exec at start pass=" pass)
+  (let ( (:long declcnt 0)
+	 (:long bbcnt 0)
+	 (:long gimplecnt 0)
+	 (:tree tmeltframdecl (null_tree))
+	 (:tree tmeltframtype (null_tree))
+	 (:tree tmeltframvarptr (null_tree))
+	 (:tree tfundecl (cfun_decl))
+	 (:long nbvarptr 0)
+	 )
+    (each_local_decl_cfun
+     ()
+     (:tree tlocdecl :long ix)
+     (debug "meltframe_exec tlocdecl" tlocdecl)
+     (match tlocdecl 
+	    (?(tree_var_decl_named
+	       ?(and ?tvtyp 
+		     ?(tree_record_type_with_fields ?tmeltframrecnam 
+						    ?tmeltframfields))
+	       ?(cstring_same "meltfram__") ?_)
+	      (setq tmeltframdecl tlocdecl)
+	      (setq tmeltframtype tvtyp)
+	      (debug "meltframe_exec tmeltframdecl=" tmeltframdecl
+		     " tmeltframtype=" tmeltframtype
+		     " tmeltframrecnam=" tmeltframrecnam 
+		     " tmeltframfields" tmeltframfields)
+	      (foreach_field_in_record_type
+	       (tmeltframfields)
+	       (:tree tcurfield)
+	       (debug "meltframe_exec tcurfield" tcurfield)
+	       (match tcurfield
+		      ( ?(tree_field_decl
+			  ?(tree_identifier 
+			    ?(cstring_same "mcfr_varptr"))
+			  ?(tree_array_type ?telemtype 
+					    ?(tree_integer_type_bounded ?tindextype
+									?(tree_integer_cst 0)
+									?(tree_integer_cst ?lmax) 
+									?tsize)))
+			 (debug "meltframe_exec telemtype=" telemtype
+				" tindextype=" tindextype 
+				" tsize=" tsize
+				" lmax=" lmax)
+			 (setq tmeltframvarptr tcurfield)
+			 (setq nbvarptr lmax)
+			 )
+		      (?_ 
+		       (void)))
+	       )
+	      )
+	    (?_ (void)))
+     (setq declcnt (+i declcnt 1))
+     )
+    (debug "meltframe_exec declcnt=" declcnt
+	   " found tmeltframdecl=" tmeltframdecl 
+	   " tmeltframvarptr=" tmeltframvarptr)
+    (if tmeltframdecl
+	(void)
+      (warning_at_tree tfundecl "MELT routine without meltfram__"))
+    (let ( (tupuseptr (make_multiple discr_multiple nbvarptr))
+	   (tupdefptr (make_multiple discr_multiple nbvarptr))
+	   )
+      (each_bb_cfun 
+       ()
+       (:basic_block bb :tree fundecl)
+       (debug "meltframe_exec fundecl" fundecl)
+       (setq bbcnt (+i bbcnt 1))
+       (eachgimple_in_basicblock 
+	(bb)
+	(:gimple g)
+	(debug "meltframe_exec g" g)
+	(setq gimplecnt (+i gimplecnt 1))
+	(match g
+	       ( ?(gimple_call_3
+		   ?lhs ?(tree_function_decl_named ?(cstring_same "memset") ?_)
+		   ?(tree_addr_expr tmeltframtype tmeltframdecl) ?arg2 ?arg3)
+		  (debug "meltframe_exec call3 memset arg2=" arg2 " arg3=" arg3)
+		  )
+	       ( ?(gimple_assign_single
+		   tmeltframdecl
+		   ?rhs)
+		  (debug "meltframe_exec gimple_assign_single meltfram rhs" rhs)
+		  )
+	       ( ?(gimple_assign_single
+		   ?(tree_array_ref 
+		     ?(tree_component_ref 
+		       tmeltframdecl
+		       tmeltframvarptr)
+		     ?(tree_integer_cst ?ixkdst))
+		   ?(tree_array_ref 
+		     ?(tree_component_ref 
+		       tmeltframdecl
+		       tmeltframvarptr)
+		     ?(tree_integer_cst ?ixksrc)))
+		  (debug "meltframe_exec gimple_assign_single varptrsrcdest ixkdst=" ixkdst 
+			 " ixksrc=" ixksrc)
+		  (cond 
+		   ( (<i ixkdst 0)
+		     (warning_at_gimple g "negative meltvarptr destination pointer index")
+		     )
+		   ( (<i ixksrc 0)
+		     (warning_at_gimple g "negative meltvarptr source pointer index")
+		     )
+		   ( (>i ixkdst nbvarptr)
+		     (warning_at_gimple g "to big meltvarptr destination pointer index")
+		     )
+		   ( (>i ixksrc nbvarptr)
+		     (warning_at_gimple g "to big meltvarptr source pointer index")
+		     )
+		   ( (==i ixksrc ixkdst)
+		     (warning_at_gimple g "useless selfassign meltvarptr")
+		     )
+		   (:else
+		    (meltframe_update_tuple_ptr tupdefptr ixkdst g)
+		    (meltframe_update_tuple_ptr tupuseptr ixksrc g)
+		    )
+		   )
+		  )
+	       ( ?(gimple_assign_single
+		   ?(tree_array_ref 
+		     ?(tree_component_ref 
+		       tmeltframdecl
+		       tmeltframvarptr)
+		     ?(tree_integer_cst ?ixkdst))
+		   ?rhs)
+		  (debug "meltframe_exec gimple_assign_single varptrdest ixkdst=" ixkdst
+			 " rhs=" rhs)
+		  (cond
+		   ( (<i ixkdst 0)
+		     (warning_at_gimple g "negative meltvarptr destination pointer index")
+		     )
+		   ( (>i ixkdst nbvarptr)
+		     (warning_at_gimple g "too big meltvarptr destination pointer index")
+		     )
+		   (:else
+		    (meltframe_update_tuple_ptr tupdefptr ixkdst g)
+		    ))
+		  )
+	       ( ?(gimple_assign_single
+		   ?lhs
+		   ?(tree_array_ref 
+		     ?(tree_component_ref 
+		       tmeltframdecl
+		       tmeltframvarptr)
+		     ?(tree_integer_cst ?ixksrc)))
+		  (debug "meltframe_exec gimple_assign_single varptrsrc lhs=" lhs
+			 " ixksrc=" ixksrc)
+		  (cond
+		   ( (<i ixksrc 0)
+		     (warning_at_gimple g "negative meltvarptr source pointer index")
+		     )
+		   ( (>i ixksrc nbvarptr)
+		     (warning_at_gimple g "too big meltvarptr source pointer index")
+		     )
+		   (:else
+		    (meltframe_update_tuple_ptr tupuseptr ixksrc g)
+		    ))
+		  )
+	       ( ?(gimple_assign_single ?lhs ?rhs)
+		  (debug "meltframe_exec gimple_assign_single lhs=" lhs " rhs=" rhs)
+		  )
+	       ( ?_ 
+		 ())
+	       )
+	)
+       )
+      (foreach_in_multiple 
+       (tupuseptr)
+       (curuselist :long ix)
+       (if (is_non_empty_list curuselist)
+	   ()
+	 (warning_at_tree_decl_with_number
+	  tfundecl "meltvarptr not used at index" ix)
+	 )
+       )
+      (foreach_in_multiple 
+       (tupdefptr)
+       (curdeflist :long ix)
+       (if (is_non_empty_list curdeflist)
+	   ()
+	 (warning_at_tree_decl_with_number
+	  tfundecl "meltvarptr not assigned at index" ix)
+	 )
+       )
+      (debug "meltframe_exec bbcnt=" bbcnt" gimplecnt=" gimplecnt)
+     
+      )
+    )
+  )
+
+
+
+(defun meltframe_docmd (cmd moduldata)
+  (let ( (meltframedata
+	  (instance class_melt_frame_data
+		    :meltfram_funcount (box 0)
+		    ))
+	(meltframepass
+	  (instance class_gcc_gimple_pass
+		    :named_name '"melt_frame_pass"
+		    :gccpass_gate meltframe_gate
+		    :gccpass_exec meltframe_exec
+		    :gccpass_data meltframedata
+		    :gccpass_properties_required ()
+		    ))
+	 )
+    (debug "meltframe_docmd installing meltframepass=" meltframepass)
+    (debug "meltframe_docmd hook_gimple_gate predef is " (melt_predefined_get 'hook_gimple_gate))
+    (install_melt_pass_in_gcc meltframepass :after '"ssa" 0)
+    (at_exit_first 
+     (lambda (x)
+       (debug "at exit meltframedata=" meltframedata)
+       (let ( (:long nbmeltrout
+		     (get_int (get_field :meltfram_funcount meltframedata)))
+	      )
+	 (code_chunk 
+	  informnbmelt
+	  #{/* $INFORMNBMELT */ 
+	    inform(UNKNOWN_LOCATION, "melt_frame_pass found %ld MELT routines", $NBMELTROUT);
+	  }#))))
+    (debug "meltframe_docmd installed pass meltframepass=" meltframepass)
+    (return cmd)	       ;return non-nil to continue compilation
+    ))
+
+(definstance meltframe_mode
+  class_melt_mode
+  :named_name '"meltframe"
+  :meltmode_help '"install a pass checking MELT frame accesses"
+  :meltmode_fun meltframe_docmd
+)
+(install_melt_mode meltframe_mode)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; a pass to find and count gimple matching a given gimple pattern
+(defclass class_findgimple_data 
+  :super class_proped
+  :fields (fndgimp_data
+	   fndgimp_maptreefun
+	   fndgimp_goodfuncount
+	   fndgimp_goodgimpcount
+	   fndgimp_nbfun
+	   fndgimp_nbgimp
+	   ))
+(export_class class_findgimple_data)
+
+
+(defvar findgimple_data_processor)
+
+(defun register_findgimple_processor (clo)
+  (cond 
+   ( (is_closure clo)
+     (setq findgimple_data_processor clo)
+     ())
+   (:else
+    (error_at () "register_findgimple_processor expecting a closure but got $1" clo)
+    (assert_msg "register_findgimple_processor check clo" (is_closure clo) clo))))
+(export_values register_findgimple_processor)
+
+
+
+(defun findgimple_docmd (cmd moduldata)
+  (debug "findgimple_docmd start cmd=" debug_less cmd)
+  (let ( 
+	 (outputstr (constant_box (melt_argument "output")))
+	 (gimplepatlist (read_arg_list '"**findgimple*gimple-pattern**" "gimple-pattern"))
+	 (funpatlist  (read_arg_list '"**findgimple*function-pattern**" "function-pattern"))
+	 (actionpatlist (read_arg_list '"**findgimple*action**" "action"))
+	 )
+    (debug "findgimple_docmd outputstr=" outputstr "\n.. gimplepatlist=" gimplepatlist
+	   "\n.. funpatlist=" funpatlist
+	   "\n.. actionpatlist=" actionpatlist)
+    ;; MELT 1.0rc3 used to want "arg", but not the real MELT 1.0
+    (when (melt_argument "arg")
+      (error_at () 
+		"findgimple mode don't like -fplugin-arg-melt-arg $1, give explicitly -fplugin-arg-melt-gimple-pattern= etc..."
+		(melt_argument "arg"))
+      (return ()))
+    (when (>i (list_length gimplepatlist) 1)
+      (error_at () 
+		"findgimple mode requires one single -fplugin-arg-melt-gimple-pattern, got $1" (melt_argument "gimple-pattern"))
+      (return ()))
+    (when (>i (list_length funpatlist) 1)
+      (error_at () 
+		"findgimple mode requires one single -fplugin-arg-melt-function-pattern, got $1" (melt_argument "function-pattern"))
+      (return ()))
+      
+    (let ( (gimplepatsrc (if gimplepatlist (list_first_element gimplepatlist) '(question _)))
+	   (funpatsrc (if funpatlist (list_first_element funpatlist) '(question _)))
+	   )
+      (debug "findgimple_docmd gimplepatsrc=" gimplepatsrc " funpatsrc=" funpatsrc)
+      (when (or (is_not_a gimplepatsrc class_sexpr)
+		(!= (list_first_element (get_field :sexp_contents gimplepatsrc)) 'question))
+	(error_at () "missing GIMPLE pattern argument for findgimple mode, not a pattern $1" gimplepatsrc)
+	(return ()))
+      (if funpatsrc
+	  (when  (or (is_not_a funpatsrc class_sexpr)
+		     (!= (list_first_element (get_field :sexp_contents funpatsrc)) 'question))
+	    (error_at () "bad TREE pattern argument for findgimple mode, not a pattern $1" funpatsrc)
+	    (return ())))
+      (with_cloned_symb 
+       (gimp treefundecl bb pass newpass)
+       (debug "findgimple_docmd cloned gimp=" gimp " treefundecl=" treefundecl " pass=" pass
+	      " bb=" bb " newpass=" newpass)
+       (let (
+	     ;; special case for joker or wild-card patterns
+	     (:long jokergimplepat 
+		    (== (list_nth_element (get_field :sexp_contents gimplepatsrc) 1) '_))
+	     (:long jokertreepat 
+		    (== (list_nth_element (get_field :sexp_contents funpatsrc) 1) '_))
+	     ;;
+	     (matchdeclexp
+	      (if funpatsrc
+		  `(match ,treefundecl
+			  (,funpatsrc 
+			   (debug "findgimple/gate good treefundecl=" ,treefundecl)
+			   (put_int goodfuncount (+i 1 (get_int goodfuncount)))
+			   (inform_at (constant_box ,treefundecl) 
+				      "FINDGIMPLE good function declaration $1 #$2"
+				      ,treefundecl (get_int goodfuncount))			   
+			   (debug "findgimple/gate updated goodfuncount=" goodfuncount)
+			   (return :true))
+			  ,(if jokertreepat (list)
+			     '(?_ 
+			       (return ()))))))
+	     (gatefunexp 
+	      (if funpatsrc 
+		  ;; explicit tree pattern
+		  `(lambda (,pass)
+		     (debug "findgimple/gate start pass=" ,pass)
+		     (with_cfun_decl
+		      ()
+		      (:tree ,treefundecl)
+		      (debug "findgimple/gate treefundecl=" ,treefundecl)
+		      (let ( (passdata (get_field :gccpass_data ,pass))
+			     (maptreefun (get_field :fndgimp_maptreefun passdata))
+			     (nbfun (get_field :fndgimp_nbfun passdata))
+			     (goodfuncount (get_field :fndgimp_goodfuncount passdata))
+			     (thistreefun (maptree_get maptreefun ,treefundecl))
+			     )
+			(assert_msg "findgimple/gate check passdata" 
+				    (is_a passdata class_findgimple_data) passdata)
+			(debug "findgimple/gate passdata=" passdata " treefundecl=" ,treefundecl
+			       "\n.. maptreefun=" maptreefun "\n.. nbfun=" nbfun "\n.. goodfuncount=" goodfuncount
+			       "\n.. thistreefun=" thistreefun)
+			(assert_msg "findgimple/gate check maptreefun" (is_maptree maptreefun) maptreefun)
+			(assert_msg "findgimple/gate check nbfun" (is_integerbox nbfun) nbfun)
+			(assert_msg "findgimple/gate check goodfuncount" (is_integerbox goodfuncount) goodfuncount)
+			(when thistreefun
+			  (debug "findgimple/gate seen thistreefun=" thistreefun " treefundecl=" ,treefundecl)
+			  ;; already seen function
+			  (return ()))
+			(put_int nbfun (+i 1 (get_int nbfun)))
+			(debug "findgimple/gate nbfun=" nbfun " treefundecl=" ,treefundecl)
+			(maptree_put maptreefun ,treefundecl (constant_box (get_int nbfun)))
+			,matchdeclexp
+			)))
+		;;; no tree pattern
+		`(lambda (,pass)
+		   (debug "findgimple/notreegate start pass=" ,pass)
+		     (with_cfun_decl
+		      ()
+		      (:tree ,treefundecl)
+		      (debug "findgimple/notreegate treefundecl=" ,treefundecl)
+		      (let ( (passdata (get_field :gccpass_data ,pass))
+			     (maptreefun (get_field :fndgimp_maptreefun passdata))
+			     (nbfun (get_field :fndgimp_nbfun passdata))
+			     (goodfuncount (get_field :fndgimp_goodfuncount passdata))
+			     (thistreefun (maptree_get maptreefun ,treefundecl))
+			     )
+			(assert_msg "findgimple/notreegate check passdata" 
+				    (is_a passdata class_findgimple_data) passdata)
+			(debug "findgimple/notreegate passdata=" passdata " treefundecl=" ,treefundecl)
+			(debug "findgimple/notreegate maptreefun=" maptreefun "\n.. nbfun=" nbfun "\n.. goodfuncount=" goodfuncount
+			       "\n.. thistreefun=" thistreefun)
+			(assert_msg "findgimple/notreegate check maptreefun" (is_maptree maptreefun) maptreefun)
+			(assert_msg "findgimple/notreegate check nbfun" (is_integerbox nbfun) nbfun)
+			(assert_msg "findgimple/notreegate check goodfuncount" (is_integerbox goodfuncount) goodfuncount)
+			(when thistreefun
+			  (debug "findgimple/notreegate seen thistreefun=" thistreefun " treefundecl=" ,treefundecl)
+			  ;; already seen function
+			  (return ()))
+			(put_int nbfun (+i 1 (get_int nbfun)))
+			(debug "findgimple/notreegate nbfun=" nbfun " treefundecl=" ,treefundecl)
+			(maptree_put maptreefun ,treefundecl (constant_box (get_int nbfun)))
+			(return :true))))
+		))
+	     ;;
+	     (matchgimpexp
+	      `(match ,gimp
+		      (,gimplepatsrc
+		       (debug "findgimple/exec good gimp=" ,gimp)
+		       (put_int goodgimpcount (+i 1 (get_int goodgimpcount)))
+		       (inform_at (constant_box ,gimp)
+				  "FINDGIMPLE good gimple $1 #$2" ,gimp goodgimpcount)
+		       ,actionpatlist
+		       (void))
+		      ,(if jokergimplepat actionpatlist
+			 '(?_ 
+			   (void)))))
+	     (execfunexp
+	      `(lambda (,pass)
+		 (debug "findgimple/exec start pass=" ,pass)
+		 (let ( (passdata (get_field :gccpass_data ,pass))
+			(goodgimpcount (get_field :fndgimp_goodgimpcount passdata))
+			(nbgimp (get_field :fndgimp_nbgimp passdata))
+			)
+		   (assert_msg "findgimple/exec check passdata" 
+			       (is_a passdata class_findgimple_data) passdata)
+		   (assert_msg "findgimple/exec check nbgimp" (is_integerbox nbgimp) nbgimp)
+		   (assert_msg "findgimple/exec check goodgimpcount" 
+			       (is_integerbox goodgimpcount) goodgimpcount)
+		   (each_bb_cfun
+		    ()
+		    (:basic_block ,bb :tree ,treefundecl)
+		    (debug "findgimple/exec bb=" ,bb " treefundecl=" ,treefundecl)
+		    (eachgimple_in_basicblock 
+		     (,bb)
+		     (:gimple ,gimp)
+		     (debug "findgimple/exec gimp=" ,gimp)
+		     (put_int nbgimp (+i 1 (get_int nbgimp)))
+		     ,matchgimpexp
+		     )))))
+	     ;;
+	     (dorunexp
+	      `(lambda (curdata)
+		 (assert_msg "findgimple/dorun check curdata" (is_a curdata class_findgimple_data))
+		 (let ( (,newpass (instance class_gcc_gimple_pass
+					 :named_name '"melt_findgimple_pass"
+					 :gccpass_gate ,gatefunexp
+					 :gccpass_exec ,execfunexp
+					 :gccpass_data curdata
+					 :gccpass_properties_required ()
+					 ))
+			)
+		   (debug "findgimple/dorun newpass=" ,newpass)
+		   (install_melt_pass_in_gcc ,newpass :after '"ssa" 0)
+		   (at_exit_first 
+		    (lambda (x)
+		      (debug "findgimple/atexit x=" x " curdata=" curdata)
+		      (assert_msg "findgimple/atexit check curdata" (is_a curdata class_findgimple_data))
+		      (let ( (:long goodfuncount (get_int (get_field :fndgimp_goodfuncount curdata)))
+			     (:long goodgimpcount (get_int (get_field :fndgimp_goodgimpcount curdata)))
+			     (:long totnbfun (get_int (get_field :fndgimp_nbfun curdata)))
+			     (:long totnbgimp (get_int (get_field :fndgimp_nbgimp curdata)))
+			     )
+			(inform_at () "findgimple found $1 matching gimples in $2 matching functions"
+				goodgimpcount goodfuncount)
+			(inform_at () "findgimple processed $1 functions and $2 gimples"
+				totnbfun totnbgimp)))))))
+	     )
+	 (debug "findgimple_docmd matchgimpexp=" matchgimpexp)
+	 (debug "findgimple_docmd gatefunexp=" gatefunexp)
+	 (debug "findgimple_docmd execfunexp=" execfunexp)
+	 (cond
+	  ( (string_length outputstr)
+	    (debug "findgimple_docmd outputstr=" outputstr)
+	    (let ( (doregsexp `(register_findgimple_processor ,dorunexp))
+		   (curenv !(current_module_environment_reference))
+		   (coutargstr (or (make_stringconst discr_string (melt_argument "coutput")) outputstr))
+		  )
+	      (compile_list_sexpr (list doregsexp) curenv coutargstr)
+	      (inform_at () "findgimple mode generated C++ code $1" coutargstr)
+	      (generate_flavored_melt_module coutargstr outputstr '"optimized")
+	      (inform_at () "findgimple mode generated optimized module $1, usable with gofindgimple mode" outputstr)
+	    ))
+	  (:else
+	   (let ( (curenv !(current_module_environment_reference))
+		  (dorun (let ( (dr (eval dorunexp curenv))
+				)
+			   (debug "findgimple_docmd dorun=" dr)
+			   dr))
+		  (findata (instance class_findgimple_data
+				     :fndgimp_data ()
+				     :fndgimp_maptreefun (make_maptree discr_map_trees 59)
+				     :fndgimp_goodfuncount (box 0)
+				     :fndgimp_goodgimpcount (box 0)
+				     :fndgimp_nbfun (box 0)
+				     :fndgimp_nbgimp (box 0)
+				     ))
+		  )
+	     (debug "findgimple_docmd dorun=" dorun " curenv=" curenv " findata=" findata)
+	     (assert_msg "findgimple_docmd check dorun" (is_closure dorun) dorun)
+	     (dorun findata)
+	     (debug "findgimple_docmd did dorun on findata=" findata)
+	   ))
+	 )
+
+       ;;
+       (debug "findgimple_docmd ended gimplepatsrc=" gimplepatsrc)
+       (return :true)
+       )))))
+
+(definstance findgimple_mode
+  class_melt_mode
+  :named_name '"findgimple"
+  :meltmode_help '"find and count all the gimples matching the given
+ gimple pattern in all functions whose declaration matches a given
+ function pattern; The gimple pattern is given with -fplugin-arg-melt-gimple-pattern= ...
+ The optional function tree pattern is given with -fplugin-arg-melt-function-pattern= ...
+ The optional action sequence is given with -fplugin-arg-melt-action= ....
+  If -fplugin-arg-melt-output is given, it is
+ the name of the generated module, to be able to repeat that same search
+ using gofindgimple mode."
+  :meltmode_fun findgimple_docmd)
+(install_melt_mode findgimple_mode)
+
+(defun gofindgimple_docmd (cmd moduldata)
+  (debug "gofindgimple_docmd cmd=" cmd " moduldata=" moduldata 
+	 " findgimple_data_processor=" findgimple_data_processor)
+  (when (null findgimple_data_processor)
+    (error_at () "no findgimple processor registered. Ensure you have loaded some module given by findgimple mode.")
+    (return ()))
+  (assert_msg "check findgimple_data_processor" (is_closure findgimple_data_processor) findgimple_data_processor)
+  (let (
+	(findata (instance class_findgimple_data
+			   :fndgimp_data ()
+			   :fndgimp_maptreefun (make_maptree discr_map_trees 59)
+			   :fndgimp_goodfuncount (box 0)
+			   :fndgimp_goodgimpcount (box 0)
+			   :fndgimp_nbfun (box 0)
+			   :fndgimp_nbgimp (box 0)
+			   ))
+	)
+    (debug "gofindgimple_docmd findata=" findata)
+    (findgimple_data_processor findata)
+    (return :true)))
+  
+(definstance gofindgimple_mode
+  class_melt_mode
+  :named_name '"gofindgimple"
+  :meltmode_help '"after having loaded an extra module built with findgimple, run that module to find the compiled Gimple patterns."
+  :meltmode_fun gofindgimple_docmd)
+(install_melt_mode gofindgimple_mode)
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; a just count IPA pass
+
+(defclass class_justcountipa_data
+  :super class_proped
+  :fields (jcntipa_data
+	   jcntipa_nbfunctions
+	   jcntipa_nbbasicblocks
+	   jcntipa_nbgimples
+	   ))
+;; no gate functions in simple IPA passes
+
+(defun justcountipa_exec (pass)
+  (let ( (passix 0)
+	 (jcdata (get_field :gccpass_data pass))
+	 )
+    (code_chunk getpassix_chk
+		#{ /* justcountipa_exec $GETPASSIX_CHK */
+		#if GCCPLUGIN_VERSION >= 4009 || MELT_GCC_VERSION >= 4009 /* GCC 4.9 and later have classes for passes */
+		$PASSIX = melt_current_pass_index_var ;
+		#endif
+		}#)
+    (debug "justcountipa_exec pass=" pass " passix=" passix " jcdata=" jcdata)
+    (assert_msg "check jcdata" (is_a jcdata class_justcountipa_data) jcdata)
+    (shortbacktrace_dbg "justcountipa_exec" 14)
+    (let ( 
+	  (jcnbfun (get_field :jcntipa_nbfunctions jcdata))
+	  (jcnbbb (get_field :jcntipa_nbbasicblocks jcdata))
+	  (jcnbgimp (get_field :jcntipa_nbgimples jcdata))
+	  )
+      (assert_msg "check jcnbfun" (is_integerbox jcnbfun) jcnbfun)
+      (assert_msg "check jcnbbb" (is_integerbox jcnbbb) jcnbbb)
+      (assert_msg "check jcnbgimp" (is_integerbox jcnbgimp) jcnbgimp)
+      (each_cgraph_fun_call_flow_graph
+       ()
+       (:tree fundecl :basic_block entrybb exitbb
+	      :value bbtup tmp)
+       (debug "justcountipa_exec fundecl=" fundecl " entrybb=" entrybb " exitbb=" exitbb " bbtup=" bbtup)
+       (put_int jcnbfun (+i (get_int jcnbfun) 1))
+       (let ( (:long nbbb (multiple_length bbtup))
+	      (:long nbgimp 0)
+	      (vfundecl (box fundecl))
+	      )
+	 (debug "justcountipa_exec vfundecl=" vfundecl)
+	 (put_int jcnbbb (+i (get_int jcnbbb) nbbb))
+	 (foreach_in_multiple
+	  (bbtup)
+	  (curbbv :long bbix)
+	  (debug "justcountipa_exec curbbv=" curbbv " bbix=" bbix)
+	  (assert_msg "check curbbv" (is_basicblock curbbv) curbbv)
+	  (let ( (:basic_block rawbb (basicblock_content curbbv))
+		 )
+	    (debug "justcountipa_exec rawbb=" rawbb)
+	    (assert_msg "check rawbb" rawbb)
+	    (eachgimple_in_basicblock
+	     (rawbb)
+	     (:gimple g)
+	     (debug "justcountipa_exec g=" g)
+	     (assert_msg "check gimple g" g)
+	     (setq nbgimp (+i nbgimp 1))
+	     )))
+	 (debug "justcountipa_exec nbgimp=" nbgimp " in vfundecl=" vfundecl)
+	 (put_int jcnbgimp (+i (get_int jcnbgimp) nbgimp))
+	 (inform_at vfundecl "just counted $1 basic blocks and $2 gimple-s in function $3"
+		    nbbb nbgimp fundecl)
+	 ))
+      (inform_at () "just counted $1 functions, cumulating $2 basic blocks and $3 gimples"
+		 (get_int jcnbfun) (get_int jcnbbb) (get_int jcnbgimp))
+      (return :true)
+      )))
+
+(defun justcountipa_docmd (cmd moduldata)
+  (debug "justcountipa_docmd start cmd=" cmd)
+  (let (
+	(jcdata (instance class_justcountipa_data
+			  :jcntipa_data ()
+			  :jcntipa_nbfunctions (box 0)
+			  :jcntipa_nbbasicblocks (box 0)
+			  :jcntipa_nbgimples (box 0)))
+	(ipass (instance class_gcc_simple_ipa_pass
+			  :named_name '"melt_justcountipa"
+			  :gccpass_exec justcountipa_exec
+			  :gccpass_data jcdata))
+	 )
+    (debug "justcountipa_docmd ipass=" ipass)
+    (install_melt_pass_in_gcc ipass :before '"*free_lang_data" -1)
+    (debug "justcountipa_docmd inserted ipass=" ipass)
+    (return :true)
+    ))
+
+(definstance justcountipa_mode
+  class_melt_mode
+  :named_name '"justcountipa"
+  :meltmode_help '"count GIMPLE in IPA [interprocedural analysis] pass"
+  :meltmode_fun justcountipa_docmd)
+(install_melt_mode justcountipa_mode)
+
+;;;;;;;;;;;;;;;;
+
+(defun justshowpass (name :long num :value ptype)
+  (debug "justshowpass name=" name " num=" num " ptype=" ptype)
+  (shortbacktrace_dbg "justshowpass" 14)
+  (inform_at () "pass $1 number $2 of type $3" name num ptype)
+  )
+
+(defun justshowpasses_docmd (cmd moduldata)
+  (debug "justshowpasses_docmd start cmd=" cmd)
+  (register_pass_execution_first justshowpass)
+  (return :true)
+  )
+
+(definstance justshowpasses_mode
+  class_melt_mode
+  :named_name '"justshowpasses"
+  :meltmode_help '"show all the executed passes"
+  :meltmode_fun justshowpasses_docmd)
+(install_melt_mode justshowpasses_mode)
+
+
+;;**************** eof xtramelt-ana-simple.melt

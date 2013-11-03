@@ -1,0 +1,41 @@
+; -*- lisp -*-
+;; file thook-1.melt
+
+#| run in buildir/gcc
+ ln -s $GCCMELT_SOURCE/gcc/testsuite/melt/thook-1.melt 
+ ./cc1 -fmelt-mode=translatedebug @meltbuild-common.args \
+    -fmelt-keep-temporary-files \
+    -fmelt-init=@warmelt.quicklybuilt \
+    -fmelt-arg=thook-1.melt \
+    -fmelt-debug meltbuild-empty-file.c
+|#
+
+(definstance myref class_reference)
+
+#|
+(defhook justahook (:long inp :tree itr) (:long out) :long
+  (debug "justahook inp=" inp " itr=" itr 
+         " out=" out 
+         " class_reference=" class_reference " myref=" myref)
+  (setq out inp)
+  (return (+i inp 1))
+  )
+|#
+
+(defun mybiapp (f) 
+  (lambda (x)
+    (f x myref)))
+
+;; also test that lambda is closing hook input values as needed
+(defhook anotherhook (:long i :value v) (:value outv) :void
+  :predef _zxtra1predef
+  (debug "anotherhook i=" i " v=" v " myref=" myref)
+  (let ( (bxi (constant_box i))
+         )
+  (setq outv
+        (lambda (x) 
+          (tuple x v bxi))))
+)
+
+(debug "anotherhook=" anotherhook "\n.. of discr=" (discrim anotherhook))
+;; eof thook-1.melt

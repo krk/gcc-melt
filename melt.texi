@@ -1,0 +1,2325 @@
+@c Copyright (c) 2008,2009,2010,2011 Free Software Foundation, Inc.
+@c Free Software Foundation, Inc.
+@c This is part of the GCC manual.
+@c For copying conditions, see the file gcc.texi.
+
+@c ---------------------------------------------------------------------
+@c  MELT
+@c ---------------------------------------------------------------------
+
+@node MELT
+@chapter MELT: Middle End Lisp Translator
+@cindex MELT
+@cindex Middle End Lisp Translator
+
+
+The MELT branch introduces a powerful Lisp dialect to express middle-end
+analyzers and passes.  This chapter describes the dialect and how to use
+it.  A working knowledge of Scheme or Lisp is presupposed.
+
+
+See the @uref{http://gcc.gnu.org/wiki/MiddleEndLispTranslator,,MELT wiki page} and 
+the @uref{http://gcc-melt.org,,GCC MELT site} 
+
+@menu
+* MELT Prerequisites::       Prerequisites and topics not yet covered in this MELT chapter.
+* MELT overview::                             An overview of MELT.
+* Building the MELT branch::                  Configuration and building requirements and instructions for MELT.
+* MELT as a plugin::                          Building and using MELT as a plugin.
+* Invoking MELT::                             Invoking MELT.
+* Tutorial about MELT::                       Tutorial describing MELT.
+* Reference on MELT::                         MELT language reference.
+* Writing C code for MELT::                   How to write C code for MELT.
+@end menu
+
+@c ----------------------------------------------------------------
+@c MELT Prerequisites 
+@c ----------------------------------------------------------------
+
+@node MELT Prerequisites
+@section MELT Prerequisites
+
+The reader is expected to have some working knowledge of some Lisp
+dialect (Common Lisp, Emacs Lisp, Guile, ...). The reader is also
+expected to be somehow familiar with the internal architecture of GCC
+(i.e. knowing what GCC @emph{gimple}-s and @emph{tree}-s are).
+
+MELT is different of other Lisps, because it is tightly suited to GCC
+internals. For that purpose, it has several peculiarities; MELT can:
+
+@itemize @bullet
+
+@item handle two kind of things.
+The MELT infrastructure can handle both MELT @emph{values} (closures,
+lists, objects, ...) and GCC @emph{stuff} (plain long integers,
+gimples, trees, ...), that it, datatypes appearing inside GCC. Both
+@emph{values} and @emph{stuff} are called MELT @emph{things}. Notice
+that @emph{stuff} is not handled polymorphically (due to a limitation
+of the GCC Garbage Collector).
+
+@item generate C code.
+MELT source code (either in @file{*.melt} files, or inside memory) is
+translated into C code suitable for GCC internals, in the style
+expected inside GCC. That generated C code is compiled into a MELT
+binary @emph{module}, which is dynamically loaded by the MELT
+infrastructure.
+
+@item provide linguistic devices.
+The MELT language has several @emph{linguistic devices} to generate C
+code suitable for GCC internals, in the style expected by GCC. So MELT
+code contains constructs to fit into GCC, and to define operators
+related to GCC coding style.
+
+@end itemize
+
+
+@c ----------------------------------------------------------------
+@c MELT Overview
+@c ----------------------------------------------------------------
+
+@node MELT overview
+@section MELT overview
+@cindex MELT overview
+
+Any MELT enabling compilation is really a long lasting compilation. It
+is supposed that you use a powerful workstation (or laptop) with
+enough memory (at least 4Gigabytes of RAM is receommended on a 64 bits
+machine like x86-64), and that the MELT-enabled compilation will run a
+lot slower than a simple @code{gcc -O1} compilation (hopefully doing
+some useful stuff). Notice that a MELT-enabled compilation usually
+generates C code, compile it (using another GCC compilation process)
+to a dynamically loadable library, and load its into the MELT-enabled
+GCC compilation process started by the user. In practice, the
+compilation of the generated C code (which is much bigger than the
+original MELT source) is the main bottleneck. Often, when using an
+existing MELT module, no C code has to be generated (it already
+exists).
+
+@c some sentences copied from the Wiki page. I (Basile) wrote all of them.
+
+The MELT plugin or branch contains several (related) stuff. Everything
+can be enabled or disabled at GCC run time:
+
+@enumerate
+
+@item a Lisp dialect compiled into C code, with which one can code
+sophisticated or prototypical middle end passes.
+
+@item a runtime which extends the GCC infrastructure to support the
+previous items, in particular a generational copying garbage
+collector well suited for the lisp dialect above, which is build
+above the existing GGC (which deals with old values).
+
+@end enumerate
+
+MELT is bootstrapped, in the sense that the translation from the MELT
+dialect to C is coded in MELT (hence the MELT generated C code is
+available from the source code).
+
+The generated C code is including only one file @code{run-melt.h}
+which includes many GCC include files internal to the compiler. It is
+compiled into a dynamic library by a shell script
+@code{*melt-cc-script*} which invokes the host GCC with appropriate
+flags.
+
+MELT obviously need that the binary (dynamic libraries @code{warm*.so})
+for the MELT translator are already available. More generally, it uses
+several kind of files:
+
+@enumerate
+
+@item the script used to compile generated C files info dynamically loadable stuff.
+This script may be invoked by MELT GCC. In common cases, the first
+argument to the script is the MELT generated input @code{*.c} file and
+the second argument is the MELT loaded output @code{*.so} dynamic
+library.
+
+@item an include directory (passed by @code{-I} to the compiler) 
+containing all the useful GCC headers. This directory is only written by
+the installation procedure.
+
+@item a permanent generated C code directory 
+which contains some essential files, in particular the C form of the
+MELT translated.
+ 
+@end enumerate
+
+MELT can be used as a plugin for GCC (and can also be compiled as a
+separate GCC branch). It uses some of the plugin machinery, even
+inside the MELT branch.
+
+When using MELT, it is important in practice to give it a work
+directory (where all generated C or object files go).
+
+@c =======================================================================
+@node Building the MELT branch
+@section Building the MELT branch
+@cindex Building the MELT branch
+
+
+
+To compile the MELT branch, you need the Parma Polyhedra Library. The
+Parma Polyhedra Library (PPL) is a free library available
+@uref{http://www.cs.unipr.it/ppl/,,here}, it is a C++ library (GPLv3
+licensed) handling lattices like intervals etc. Also, the host
+compiler (the compiler which compiles the source code of GCC), also
+used to compile MELT generated C code during MELT enabled @code{gcc}
+execution, should be some version of @code{gcc} (preferably a 4.x
+version at least).
+
+Note that currently MELT is only compiled on Linux machines.
+
+MELT can also be used as a plugin to GCC (4.6 or latter).
+
+@c =======================================================================
+@node MELT as a plugin
+@section MELT as a plugin
+@cindex MELT as a plugin
+
+MELT can be used as a plugin to a GCC 4.6 or 4.7 (or better) binary
+(i.e. future gcc 4.8) build with plugin enabled.  You'll need the GCC
+headers available to plugins, @file{gengtype} and its state file to
+build and run the MELT plugin.
+
+Detailed instructions about building MELT as a plugin are available in
+the MELT plugin source tarball.
+
+@c =======================================================================
+@node Invoking MELT
+@section Invoking MELT
+@cindex Invoking MELT
+
+Without any MELT specific program flags, the MELT variant of gcc
+behave as the trunk. So to get or use MELT features, you need to pass
+some special flags. Most of these flags are starting with
+@code{-fmelt} for the MELT branch or with @code{-fplugin-melt-arg} for
+the plugin. They for the middle-end of GCC so are common for every
+source language (ie @code{gcc}, @code{g++} @dots{} commands) and
+target.
+
+MELT is usually invoked while compiling a (C, C++, @dots{}) source
+file but may occasionnally be invoked with an empty C input to perform
+tasks which are not related to a particular GCC input source file. In
+practice, you should pass an empty C file to @code{gcc} for that
+purpose. In particular, the translation of a MELT file @code{foo.melt}
+into C code @code{foo.c} is done with a special invocation like
+@code{gcc -fmelt-mode=translatefile -fmelt-arg=foo.melt
+-fmelt-secondarg=foo.c} (possibly with other options like some
+appropriate @code{-fmelt-init=}). It is possible but deprecated to
+invoke with @code{-fmelt-mode=compilefile} instead of
+@code{-fmelt-mode=translatefile}. In other words, the MELT translator to C
+@emph{is not} a GCC front-end, like e.g. @code{g++} is a C++ front-end
+of GCC.
+
+The table below lists all MELT specific options, in alphabetical
+order. We list both MELT branch options like @code{-fmelt-arg=} and
+MELT plugin option like @code{-fplugin-arg-melt-arg=}
+
+@table @gcctabopt
+@item -fmelt-mode=
+@gccoptlist{-fplugin-arg-melt-mode=}
+@opindex fmelt-mode
+@opindex fplugin-arg-melt-mode
+
+This flag (called the MELT mode flag) is required for every MELT
+enabled compilation. If it is not given, no MELT specific processing
+is done.  If given, this gives the mode to be used before any
+MELT passes. It uses the @code{:sysdata_mode_dict} field of
+@code{INITIAL_SYSTEM_DATA} internal object of MELT to determine the
+MELT function applied to execute the mode. If this application
+returns nil, no GCC compilation occur (i.e. no @code{*.c} or
+@code{*.cc} etc@dots{} source file is read). Hence, some modes may
+be used for their side-effects. In particular, the compilation of MELT
+lisp source file @code{*.melt} into C code @code{*.c} is done this
+way.
+
+Several modes may be given by separating them with commas. They are
+handled in that case in succession.
+
+@item -fmelt-arg=
+@gccoptlist{-fplugin-arg-melt-arg=}
+@opindex fmelt-arg=
+This gives the first argument string to MELT. It is incompatible with
+the @code{-fmelt-arglist=} option.
+
+@item -fmelt-arglist=
+@gccoptlist{-fplugin-arg-melt-arglist=}
+@opindex fmelt-arglist=
+@opindex fplugin-arg-melt-arglist=
+This gives the first argument list of strings to MELT. It is
+incompatible with the @code{-fmelt-arg=} option. The string program
+argument is split into a list of strings using the comma
+separator. For example, @code{-fmelt-arglist=1,BB,3} makes a
+three-element list argument with first string @code{1}, second string
+@code{BB} and third string @code{3}. There is no way to give a
+string subargument containing a comma.
+
+
+
+@item -fmelt-print-settings=
+@gccoptlist{-fplugin-arg-melt-print-settings=}
+@opindex fmelt-print-settings=
+@opindex fplugin-arg-melt-print-settings=
+The builtin settings (notably MELT builtin modules directory and MELT
+builtin source directory) used by MELT are output in the given file,
+which should be source-able by a Posix shell if you are lucky enough.
+This is mostly useful in configuration, building, or packaging scripts.
+
+@item -fmelt-coutput=
+@gccoptlist{-fplugin-arg-melt-coutput=}
+@opindex fmelt-coutput=
+@opindex fplugin-arg-melt-coutput=
+This flag gives the name of the generated C file.
+
+@item -fmelt-bootstrapping
+@gccoptlist{-fplugin-arg-melt-bootstrapping}
+@opindex fmelt-bootstrapping
+@opindex fplugin-arg-melt-bootstrapping
+This flag is useless to most users. When given, MELT is
+bootstrapping (translating its own translator from MELT to C), so some
+environment variables and options are ignored. Only for gurus working
+on the MELT translator. See @code{melt-runtime.c} for dirty details.
+
+@item -fmelt-print-settings=
+@gccoptlist{-fplugin-arg-melt-print-settings=}
+@opindex fmelt-print-settings=
+@opindex fplugin-arg-melt-print-settings=
+The builtin settings (notably MELT builtin modules directory and MELT
+builtin source directory) used by MELT are output in the given file,
+which should be source-able by a Posix shell if you are lucky enough.
+This is mostly useful in configuration, building, or packaging scripts.
+
+@item -fmelt-coutput=
+@gccoptlist{-fplugin-arg-melt-coutput=}
+@opindex fmelt-coutput=
+@opindex fplugin-arg-melt-coutput=
+This flag gives the name of the generated C file.
+
+@item -fmelt-output=
+@gccoptlist{-fplugin-arg-melt-output=}
+@opindex fmelt-coutput=
+@opindex fplugin-arg-melt-output=
+This flag gives the name of the generated files.
+
+@item -fmelt-debug
+@gccoptlist{-fplugin-arg-melt-debug}
+@opindex fmelt-debug
+@opindex fplugin-arg-melt-debug
+This flag has no argument and asks for lot of debugging output. It is
+only useful to debug MELT code and is unrelated to the @code{-g} flag
+asking GCC to output debug information. Obsolete, use
+@code{-fmelt-debugging=mode} instead.
+
+@item -fmelt-generate-work-link
+@gccoptlist{-fplugin-arg-melt-generate-work-link}
+@opindex fmelt-generate-work-link
+@opindex fplugin-arg-melt-generate-work-link
+This flag, when used in translating modes (for MELT to C
+translations), generates the files as a unique name in the work
+directory, with a symbolic link to it from the output path.
+
+@item -fmelt-generated-c-file-list=
+@gccoptlist{-fplugin-arg-melt-generated-c-file-list=}
+@opindex fmelt-generated-c-file-list=
+@opindex fplugin-arg-melt-generated-c-file-list=
+When given, this is a file name into which MELT lists the set of
+really written or overwritten emitted C file names, one per line (and
+also some lines starting with @code{#}). Unchanged files are prefixed
+with @code{=}, new or changed files are prefixed with @code{+}.
+
+
+@item -fmelt-output=
+@gccoptlist{-fplugin-arg-melt-output=}
+@opindex fmelt-coutput=
+@opindex fplugin-arg-melt-output=
+This flag gives the name of the generated files.
+
+@item -fmelt-debug
+@gccoptlist{-fplugin-arg-melt-debug}
+@opindex fmelt-debug
+@opindex fplugin-arg-melt-debug
+This flag has no argument and asks for lot of debugging output. It is
+only useful to debug MELT code and is unrelated to the @code{-g} flag
+asking GCC to output debug information. Obsolete, use the equivalent
+@code{-fmelt-debugging=mode} or
+@code{-fplugin-arg-melt-debugging=mode} instead.
+
+@item -fmelt-debugging=
+@gccoptlist{-fplugin-arg-melt-debugging=}
+@opindex fmelt-debugging=
+@opindex fplugin-arg-melt-debugging=
+This flag should either be set to @code{mode} or to @code{all}. When
+set (e.g. with @code{fplugin-arg-melt-debugging=mode}) to @code{mode},
+debugging messages happen only after mode processing; when set to
+@code{all}, they happen everywhere.
+
+@item -fmelt-source-path=
+@gccoptlist{-fplugin-arg-melt-source-path=}
+@opindex fmelt-source-path=
+@opindex fplugin-arg-melt-source-path=
+This flag sets the path (colon separated list of directories) for
+sources (i.e. @file{*.melt} and @file{*.c}). Otherwise use the
+@code{GCCMELT_SOURCE_PATH} environment variable.
+
+@item -fmelt-module-path=
+@gccoptlist{-fplugin-arg-melt-module-path=}
+@opindex fmelt-module-path=
+@opindex fplugin-arg-melt-module-path=
+This flag sets the path (colon separated list of directories) for
+MELT binary modules (i.e. @file{*.so}). Otherwise use the
+@code{GCCMELT_MODULE_PATH} environment variable.
+
+@item -fmelt-module-make-command=
+@gccoptlist{-fplugin-arg-melt-module-make-command=}
+@opindex fmelt-module-make-command=
+@opindex fplugin-arg-melt-make-command=
+This flag defines the @code{make} command used to build MELT binary
+modules (i.e. @file{*.so}). from a small set of generated C files. The
+default is the GNU make utility used to build MELT, very often just
+@code{make} or perhaps @code{gmake}.
+
+@item -fmelt-module-makefile=
+@gccoptlist{-fplugin-arg-melt-module-makefile=}
+@opindex fmelt-module-makefile=
+@opindex fplugin-arg-melt-makefile=
+This flag defines the makefile used to build MELT binary modules
+(i.e. @file{*.so}). from a small set of generated C files. The default
+is a file @file{melt-module.mk}.
+
+@item -fmelt-module-cflags=
+@gccoptlist{-fplugin-arg-melt-module-cflags=}
+@opindex fmelt-module-cflags=
+@opindex fplugin-arg-melt-cflags=
+This flag defines the @code{CFLAGS} passed to @code{make} to build
+MELT binary modules. If not given, the environment variable
+@code{GCCMELT_MODULE_CFLAGS} is used if it was set.
+
+@item -fmelt-init=
+@gccoptlist{-fplugin-arg-melt-init=}
+@opindex fmelt-init=
+@opindex fplugin-arg-melt-init=
+This flag sets the initial MELT modules. They are separated by
+colons or semi-colons. So @code{-fmelt-init=foo:bar}
+or @code{'-fmelt-init=foo;bar'} (quotes are useful for the shell
+running GCC) load first the @code{foo} module and then the @code{bar}
+module. A module starting with an at sign @code{@@} is handled as a
+module list file. The @code{.modlis} extension is added, and then a
+file is seeked by that name. This file is read line by line (with
+empty or blank lines skipped, and comment lines starting with an hash
+@code{#} skipped). Each line is the name of a module do be load in
+sequence. For example, @code{-fmelt-init=@@mylist:bar} with a file
+@file{mylist.modlis} containing
+@example
+# file mylist.modlis ; just a comment
+alpha
+beta
+@end example
+would have the same effect as @code{-fmelt-init=alpha:beta:bar}.
+Notice that modules are seeked in several directories. The notation
+@code{@@@@} is a shorthand for the default module list called
+@file{melt-default-modules.modlis} and is the default value of this
+flag. 
+
+@item -fmelt-extra=
+@gccoptlist{-fplugin-arg-melt-extra=}
+@opindex fmelt-extra=
+@opindex fplugin-arg-melt-extra=
+This flag sets the extra MELT modules. They are separated by
+semi-colons or (on Unix only) colons.  Extra modules are also searched
+in the current directory, and are loaded after processing of MELT
+options.  In practice, to use your own MELT module @code{foo} you
+should pass @code{-fmelt-extra=foo} because your module needs the
+default modules.
+
+
+
+@item -fmelt-tempdir=
+@gccoptlist{-fplugin-arg-melt-tempdir=}
+@opindex fmelt-tempdir=
+@opindex fplugin-arg-melt-melt-tempdir=
+This flags sets the temporary MELT directory. If specified it is not
+cleaned. If it does not exist, it is mkdir-ed and cleaned. Avoid
+setting it to a non-empty directory which may contain files named like
+MELT modules (such as @file{warmelt-*.so} etc.).
+
+@item -fmelt-option=
+@gccoptlist{-fplugin-arg-melt-option=}
+@opindex fmelt-option=
+This set some options for MELT. the argument is a comma separated
+sequence of options settings, each being an option name possibly
+followed by an equal sign and an option value. For example,
+@code{-fmelt-option=foo,bar=x} set the option @code{foo} and the option
+@code{bar} to @code{x}. An option name is case-insensitive and may
+appear several times.
+
+@item -fmelt-workdir=
+@gccoptlist{-fplugin-arg-melt-workdir=}
+@opindex fmelt-workdir=
+@opindex fplugin-arg-melt-melt-workdir=
+This flags sets the working MELT directory. If specified all generated
+files go inside, and MELT modules are also loaded from it. Use that
+flag if you don't want MELT related generated files to clobber your
+source tree.
+
+@end table
+
+
+
+@c =======================================================================
+@node Tutorial about MELT
+@section Tutorial about MELT
+@cindex Tutorial about MELT
+
+More up to date information may be found on @uref{http://gcc-melt.org,,GCC MELT site}.
+
+@c should tell how to run the hello world MELT program
+
+@c should explain most MELT constructs
+
+As in all Lisps, parenthesis are important, so @code{a} and @code{(a)}
+do not mean the same thing. The first stuff after an opening
+parenthesis has usually an operator or syntactic keyword role.
+
+@cindex @code{upgrade-warmelt} make target for MELT
+MELT is a Lisp dialect translated into (unreadable, or at least
+unfriendly) C code. Some MELT constructs, and some MELT limitations
+(e.g. lack of tail-recursion) are related to this C
+translatability. The MELT translator is itself written in MELT (files
+@file{gcc/melt/warmelt-*.melt}) and is bootstrapped; the translated C
+files are in @file{gcc/warmelt-*-0.c}; they are quite big and are
+distributed with the GCC source code; use the @code{upgrade-warmelt}
+target of @file{gcc/Makefile.in} to regenerate these C translations.
+
+MELT is closely related to GCC internal passes and internal middle-end
+representations and runtime. Hence (in contrast to other LISP
+dialects) @emph{MELT is dealing with both boxed values and unboxed
+stuff} (e.g. plain @code{long} integers as in C, but also @code{tree}s
+and @code{gimple}s, etc@dots{}, as inside GCC, separating them using their
+@emph{ctype}). Keep always in mind the boxed versus unboxed
+distinction. Because of that, and because of GCC runtime (in
+particular the GGC garbage collector), MELT is neither polymorphic
+(you cannot deal with unboxed stuff like with boxed values) nor
+polytopic (no variable arguments facility).
+
+Some familiarity with other Lisp dialects and with GCC internals is
+required to code in MELT.
+
+The MELT runtime contains a copying generational garbage collector
+-GC- implemented in @file{gcc/melt-runtime.c}, backed up by the previously
+existing GCC ordinary (precise, marking) garbage collector GGC. The
+MELT-specific copying GC is designed for efficiency (but requires a
+very specific C coding style, easy to achieve in generated C code, but
+uncumfortable for human C developers), and handles well quick
+allocation of many short-lived objects [which is not a goald of
+GGC]. Therefore, @emph{don't be afraid of allocating a lot of values}
+inside MELT code.
+
+@menu
+* Reserved MELT syntax and symbols::
+* Primitives in MELT::
+* Citerators in MELT::
+* Functions in MELT::
+@end menu
+
+This section has to be completed.
+
+@node Reserved MELT syntax and symbols
+@subsection Reserved MELT syntax and symbols
+
+The following symbols have specific MELT meaning. Use them only as
+described here and avoid redefining them.  @code{and assert_msg
+comment compile_warning cond cppif
+current_module_environment_container debug_msg defciterator defclass
+definstance defprimitive defselector defun exit export_class
+export_macro export_values fetch_predefined forever get_field if instance lambda
+let make_instance match multicall or parent_module_environment progn
+put_fields quote return setq store_predefined
+unsafe_get_field unsafe_put_fields
+update_current_module_environment_container}
+
+Also avoid symbols starting with @code{def}
+
+@node Primitives in MELT
+@subsection Primitives in MELT
+
+@cindex Primitive in MELT
+A MELT primitive defines an operator by specifying how to translate
+into C each of its invocation. As a simple example, the less-than
+integer operator @code{<i} is defined as
+@lisp
+(defprimitive <i                @r{; define the primitive }
+  (:long                        @r{; next formal arguments are longs}
+   a b)                         @r{; the two formal arguments}
+  :long                         @r{; the type of the result (also long)}
+  "((" a ") < (" b "))")        @r{; how to expand into C code}
+@end lisp
+
+Later on, a MELT expression like @code{(<i @var{a} @var{b})} gets
+translated into C code similar to @code{((curfnum[3]) < (curfnum[7]))}
+where @code{curfun[3]}@footnote{@code{curfnum} is a C macro expanding
+to @code{curframe__.varnum}} is the translation of the normalized
+form@footnote{The C code for the normalization of @var{a} which
+assigns @code{curfnum[3]} occurs before, so translating MELT to C is
+not a simple rewriting algorithm..} of @var{a}, etc.
+
+@cindex unboxed MELT stuff
+@cindex ctype in MELT
+Note that the above primitive accepts raw long integers (exactly the C
+@code{long} type) and returns such a long integer [0 if
+@code{((a)<(b))} was false in the C sense, and non-zero, perhaps -1,
+if it was true]. We say that such integers are @emph{unboxed} stuff
+(we don't speak of values in that case). The symbol @code{:long}
+represents the C type @code{long} and we call it a @emph{ctype}.
+
+@node Citerators in MELT
+@subsection Citerators in MELT
+
+@cindex Citerator in MELT
+
+A MELT c-iterator or @emph{citerator} is a construct which generalize
+iterative loops (like the @code{for} in C). As a trivial example, to
+iterate on positive integers till a limit, define
+
+@lisp
+(defciterator each-posint-till     @r{; define each-posint-till citerator}
+ (:long lim)                      @r{; start formal argument is lim}
+ eachposint                       @r{; state symbol - uniquely substituted}
+ (:long cur)                      @r{; local formals}
+ (                                @r{; start of before expansion}
+ "long " eachposint ";"
+ " for (" eachposint"=0; " 
+        eachposint "<" lim ";"
+        eachposint "++) @{"
+   cur " = " eachposint;
+ )
+ (                                @r{; start of after expansion}
+ "@}" 
+ )
+) 
+@end lisp
+
+When used in a MELT expression like @code{(each-posint-till (5) (:long
+v) (print-long v))} -which has @code{:void} ctype because citerators
+are only useful for their side-effects- the C translation is vaguely
+similar (assuming @code{print-long} is a primitive expanding to
+@code{printf(``%d\n'',@var{@dots{}})} to something looking like
+@example
+curfnum[11] /*LIM*/ = 5;
+@{long eachposint_24;
+ for (eachposint_24=0; eachposint_24<curfnum[11]; eachposint_24++) @{
+   curfnum[3] /*V*/ = eachposint_24;
+   printf("%d\n", curfnum[3] /*V*/);
+ @}
+@}
+@end example
+
+So the start formals is translated as some local variable in the MELT
+frame, the state symbol @code{eachposint} is only used to generate a C
+identifier (unique to each occurrence of the citerator) and the local
+formals are translated to local variables bound inside the iterators
+body.
+
+In practice, citerators are very useful for interfacing to the various
+iterating idioms in GCC. A more realistic example is
+@lisp
+@r{;;;; iterate on a gimpleseq}
+(defciterator each_in_gimpleseq
+  (:gimpleseq gseq)			@r{;start formals}
+  eachgimplseq
+  (:gimple g)				@r{;local formals}
+  ( @r{;;; before expansion}
+   "gimple_stmt_iterator gsi_" eachgimplseq ";\n"
+   @r{;; test that @t{gseq} is not null to be safe}
+   "if (" gseq ") for (gsi_" eachgimplseq " = gsi_start (" gseq
+        "); !gsi_end_p (gsi_" eachgimplseq ");"
+   " gsi_next (&gsi_" eachgimplseq ")) @{\n"
+    g " = gsi_stmt (gsi_" eachgimplseq ");"
+   )
+  ( @r{;;; after expansion}
+   "@}"
+   )
+)
+@end lisp
+
+@node Functions in MELT
+@subsection Functions in MELT
+
+@cindex Function in MELT
+
+As in many lisp dialect (e.g. Common Lisp) MELT functions are defined
+using the @code{defun} construct. The first argument (and the primary
+result) of all MELT function should always be a value, so it is not
+possible to give an unboxed @code{gimple} stuff to a function; hence
+we box it (pack it into a MELT value) before passing it as an
+argument.
+
+The following define a second-order function (actually defined in
+@file{ana-base.melt}) called @code{do_each_gimpleseq} which gets two
+arguments, the first being itself a MELT function and the second being
+an unobxed @code{gimple} stuff, and apply the first argument to boxes
+packing each @code{gimple} inside the given @code{gimpleseq}.
+
+@lisp
+@r{;; apply a function to each boxed gimple in a gimple seq}
+(defun do_each_gimpleseq (f :gimpleseq gseq)
+  (each_in_gimpleseq 
+   (gseq) (:gimple g)
+   (let ( (gplval (make_gimple discr_gimple g)) )
+     (f gplval)))
+)
+@end lisp
+
+This function is only useful for its side effect (calling a function
+for each member of a @code{gimpleseq}). It returns the nil value.
+
+The real translation to C of the above is a quite big and messy C
+function, actually:
+
+@verbatim
+static melt_ptr_t
+rout_9_DO_EACH_GIMPLESEQ (meltclosure_ptr_t closp_,
+			  melt_ptr_t firstargp_, const char xargdescr_[],
+			  union meltparam_un *xargtab_,
+			  const char xresdescr_[],
+			  union meltparam_un *xrestab_)
+{
+#if ENABLE_CHECKING
+  static long call_counter__;
+  long thiscallcounter__ ATTRIBUTE_UNUSED = ++call_counter__;
+#define callcount thiscallcounter__
+#else
+#define callcount 0L
+#endif
+  struct frame_rout_9_DO_EACH_GIMPLESEQ_st
+  {
+    unsigned nbvar;
+#if ENABLE_CHECKING
+    const char *flocs;
+#endif
+    struct meltclosure_st *clos;
+    struct excepth_melt_st *exh;
+    struct callframe_melt_st *prev;
+#define CURFRAM_NBVARPTR 5
+    void *varptr[5];
+/*no varnum*/
+#define CURFRAM_NBVARNUM /*none*/0
+/*others*/
+    gimple_seq loc_CTYPE_GIMPLESEQ__o0;
+    gimple loc_CTYPE_GIMPLE__o1;
+    long _spare_;
+  }
+  curfram__;
+  memset (&curfram__, 0, sizeof (curfram__));
+  curfram__.nbvar = 5;
+  curfram__.clos = closp_;
+  curfram__.prev = (struct callframe_melt_st *) melt_topframe;
+  melt_topframe = (struct callframe_melt_st *) &curfram__;
+  melt_trace_start ("DO_EACH_GIMPLESEQ", callcount);
+@end verbatim
+
+The generated C function has a strange C formal arguments list (every
+applicable routine has the same signature in C. All arguments except
+the first are passed in an array of union, described by a short
+constant string, one character per argument, encoding its
+ctype. Secondary results are handled likewise). Some code is only
+enabled with @code{#if ENABLE_CHECKING} when GCC is configured for
+debugging (not for release). The MELT call frame is declared
+explicitly as a structure called @code{curfram__}, and is properly
+initialized, and set as the @code{melt_topframe}. The
+@code{melt_trace_strart MELT_LOCATION callcount} C macros are
+significant only when @code{#if ENABLE_CHECKING}.
+
+@verbatim
+  /*getarg#0 */
+  MELT_LOCATION ("ana-base.melt:436:/ getarg");
+#ifndef MELTGCC_NOLINENUMBERING
+#line 436 "ana-base.melt" /**::getarg::**/
+#endif /*MELTGCC_NOLINENUMBERING */
+ /*_.F__V2*/ curfptr[1] = (melt_ptr_t) firstargp_;
+@end verbatim
+
+We start to fetch the first argument into the current frame, since
+@code{curfptr} is actually a C macro defined as
+@code{curfram__.varptr}. The @code{MELT_LOCATION} macro call
+(significant only when checking was enabled, and setting the
+@code{flocs} field of the current frame in that case) and the
+@code{#line} directive@footnote{The @code{#line} directive can be
+disabled by compiling the generated C with
+@code{-DMELTGCC_NOLINENUMBERING}.} refer to the MELT source
+location. For clarity, we now skip them, but there are @emph{lots of
+such positional information} in the generated C code. Note that a
+single MELT source line is producing many C code lines (hence the line
+numbering seen in a debugger might be slightly wrong), and that some
+comments are generated (notably explaining what each @code{curfptr}
+occurrence means).
+
+@verbatim
+  /*getarg#1 */
+  if (xargdescr_[0] != BPAR_GIMPLESEQ)
+    goto lab_endgetargs;
+  curfram__.loc_CTYPE_GIMPLESEQ__o0 = xargtab_[0].bp_gimpleseq;
+  goto lab_endgetargs;
+lab_endgetargs:;
+@end verbatim
+
+The second argument is likewise fetched, only if the actual argument
+is of @code{gimpleseq} ctype. The useless goto is optimized by any
+serious C compiler (like gcc).
+
+@verbatim
+/*block*/
+  {
+    /*citerblock EACH_IN_GIMPLESEQ */
+    {
+      gimple_stmt_iterator gsi_cit1__EACHGIMPLSEQ;
+      if ( /*_?*/ curfram__.loc_CTYPE_GIMPLESEQ__o0)
+	for (gsi_cit1__EACHGIMPLSEQ =
+	     gsi_start ( /*_?*/ curfram__.loc_CTYPE_GIMPLESEQ__o0);
+	     !gsi_end_p (gsi_cit1__EACHGIMPLSEQ);
+	     gsi_next (&gsi_cit1__EACHGIMPLSEQ))
+	  {
+/*_?*/ curfram__.loc_CTYPE_GIMPLE__o1 =
+	      gsi_stmt (gsi_cit1__EACHGIMPLSEQ);
+	    /*block */
+	    {
+   /*_.GPLVAL__V4*/ curfptr[3] =
+		(meltgc_new_gimple
+		 ((meltobject_ptr_t)
+		  (( /*!DISCR_GIMPLE */ curfrout->tabval[0])),
+		  ( /*_?*/ curfram__.loc_CTYPE_GIMPLE__o1)));;
+@end verbatim
+
+This is the beginning of a block generated by a citerator. It contains
+the translation of the @code{make_gimple} primitive use as a call to
+the @code{meltgc_new_gimple} C function.
+
+@verbatim
+	      /*apply */
+	      {
+		/*_.F__V5*/ curfptr[4] =
+		  melt_apply ((meltclosure_ptr_t)
+				 ( /*_.F__V2*/ curfptr[1]),
+				 (melt_ptr_t) ( /*_.GPLVAL__V4*/
+						  curfptr[3]), 
+                                 "", (union meltparam_un *) 0, 
+                                 "", (union meltparam_un *) 0);
+	      };
+@end verbatim
+
+This is the translation of the application of @code{f}. Since there
+only one argument and no secundary results, we pass null @code{union
+meltparam_un} pointers described by empty strings to follow the
+pecular conventions required by
+@code{melt_apply}@footnote{@code{melt_apply} is a short inlined
+function defined in @file{gcc/melt.h} which checks that the applied
+value is indeed a MELT function closure and calls its routine.} and
+respected by MELT generated C functions implementing MELT routines.
+
+@verbatim
+	      /*epilog */
+	     /*clear *//*_.GPLVAL__V4*/ curfptr[3] = 0;
+	     /*clear *//*_.F__V5*/ curfptr[4] = 0;
+	    };
+	  }
+      /*citerepilog */
+	    /*clear *//*_?*/ curfram__.loc_CTYPE_GIMPLE__o1 = 0;
+	    /*clear *//*_.LET___V3*/ curfptr[2] = 0;
+    }				/*endciterblock EACH_IN_GIMPLESEQ */
+@end verbatim
+
+Some MELT local variables are explicitly cleared. This helps the MELT
+garbege collector. The block generated for the citerator is ended,
+again by clearing some locals.
+
+@verbatim
+    /*epilog */ };
+  goto labend_rout;
+labend_rout:
+  melt_trace_end ("DO_EACH_GIMPLESEQ", callcount);
+  melt_topframe = (struct callframe_melt_st *) curfram__.prev;
+  return (melt_ptr_t) ( /*noretval */ NULL);
+#undef callcount
+#undef CURFRAM_NBVARNUM
+#undef CURFRAM_NBVARPTR
+}				/*end rout_9_DO_EACH_GIMPLESEQ */
+@end verbatim
+
+This is the whole function epilog. The MELT top frame is popped, and
+the previous is reinstated.
+
+Of course, nobody wants to read or understand the generated code
+above.
+
+In practice, such second-order functions (second order because they
+are functionals, consuming function arguments) are often used with
+anonymous functions using the @code{lambda} construct, eg
+@lisp
+(do_each_gimpleseq
+ (lambda (boxgimp) @r{;anonymous function with argument boxgimp}
+  (let ( (:long gimp
+          @r{; fetch the content of the boxed gimple value as an unboxed stuff}
+          (gimple_content boxgimp)) )
+  @var{@dots{}. do something with @code{gimp} stuff @dots{}.}
+ ))
+bgs @r{; some boxed gimple value}
+)
+@end lisp
+@c =======================================================================
+
+@node Reference on MELT
+@section Reference on MELT
+@cindex Reference on MELT
+
+@menu
+* Lexical MELT conventions::
+* Main MELT syntax and features::
+* MELT modules and translation::
+* Writing GCC passes in MELT::
+@end menu
+
+@node Lexical MELT conventions
+@subsection Lexical MELT conventions
+
+It is recommended to edit MELT files with a Lisp-aware editor
+(e.g. the GNU emacs Lisp mode).
+
+As in Lisp dialects:
+
+@itemize @bullet
+
+@item parenthesis 
+are essential and should be matched. It is an error to add extra right
+parenthesis.
+
+@item brackets 
+are like parenthesis but should be matched (but you probably don't
+want to use them). @code{[a b]} is the same as @code{(a b)} but both
+@code{[a b)} and @code{(a b]} are incorrect.
+
+@item comments 
+start with a semicolon (@code{;}) to the end of the line. This is the
+prefered way to put comments in MELT file.
+
+@item block comments 
+start with hash-bar (@code{#|}), may take several lines, and end with
+bar-hash (@code{|#}). Don't nest block comments.
+
+@item space 
+characters are token sepators, but indentation does not matter (we
+strongly recommend the MELT code to be properly indented, e.g. using
+Emacs Lisp mode, for readability purposes).
+
+@item case 
+is insensitive; words, i.e. identifiers and keywords are all converted
+to uppercases.
+
+@item strings 
+are denoted like in C between double quotes, with backslashes escaping
+(eg double-backslash @code{\\} to represent a single backslash,
+backslash doublequote @code{\"} to represent a doublequote, backslash t
+@code{\t} for a tab, , and @code{\xfe} to represent the character
+coded 0xfe in hex, etc. In addition, a backslash-leftbrace @code{ \@{
+} read verbatim all characters up to the first rightbrace @code{ @}
+}. A string with the last doublequote followed by an underscore like
+@code{"do that"_} is localized using the @code{gettext} host system
+function; this could be useful for some user messages (to be
+translated to other languages like french).
+
+@item symbols
+ (i.e. identifiers) are case insensitive and may contain non
+alphanumerical characters like @code{_+-*/<>=!?:%~&@@$}. It is advised
+to use these special characters sparingly. Symbols cannot start with
+any of @code{?%}. Because symbols are related to their C translation,
+is advised to avoid digits after underscores in symbols like
+@code{x_12} and to have each symbol contain at least one letter
+(e.g. use @code{<i} instead of @code{<}).
+
+@item the quote character 
+@code{'} is special. @code{'x} is parsed the same as @code{(quote x)}.
+
+@item the backquote character 
+@code{`} is special. @code{`x} means the same as @code{(backquote x)}
+
+@item the comma character 
+@code{,} is special. So @code{,x} means @code{(comma x)} and @code{,(a
+b)} is @code{(comma (a b))}
+
+@item the question mark chararacter 
+@code{?} is special when is is the first of a token (it may appear
+inside a symbol otherwise). For instance, @code{?x} means
+@code{(question x)} but @code{x?} is a symbol of two characters. So
+@code{?y?} is bad taste but means @code{(question y?)}
+
+@item the hash character 
+@code{#} is special. In particular, @code{#|} starts multiline
+comments; @code{#\space} is the integer code of the space character;
+@code{#b10} is a binary number (i.e. two), @code{#o12} is octal (ie
+ten), @code{#xffff} is hexadecimal number (ie 65535). @code{#@{}
+starts macrostrings.
+
+@item macro strings
+@cindex macro string in MELT
+To avoid escaping many C-like caracters in C code chunks used for
+primitives, c-iterators, c-matchers etc.. an alternative multi-line
+lexical construct exist: the macro string started with @code{#@{} and
+ending with @code{@}#} possibly on a different line with @code{$}
+escapes like in C. For example, the @code{#@{if ($A>0) printf("%s",
+$B);@}# } macrostring is parsed exactly as the 5-elements s-expression
+@code{ ("if (" A ">0) printf(\"%s\", " B ");")}. In a macrostring, all
+caracters are taken as is, except the dollar sign @code{$}; the
+macro-string itself is always read as an S-expr. When a dollar is
+followed by alphanumerical (or underscore) caracters like a C
+identifier, it is parsed as a symbol. If it is followed by an hash
+@code{#} caracter, that hash-character is skipped and terminate the
+symbol. The @code{$.} sequence is skipped and ignored, the
+double-dollar @code{$$} is read as a single dollar, the @code{$#} is
+read as a single hash @code{#}.
+
+A macro-string starting with the four characters @code{#@{$'} is
+expanded into a @code{(quote @var{...})} expression and should
+preferably not contain symbols like @code{$@var{symb}}. This special
+meaning of @code{$'} is only relevant when appearing at the very start
+of the macro-string.
+
+
+@item braces 
+@code{@{} and @code{@}} are special.
+
+
+@item numbers
+are integers in decimal like @code{-123} or @code{+22} or
+@code{33}. Notice that @code{1.2} is illegal; it is not a floating
+point number.
+
+@item colons 
+(i.e. @code{:}) starts constant (lisp-like) keywords which always evaluate to themselves.
+
+@end itemize
+
+Contrarily to some or most other Lisp dialects:
+
+@itemize @minus
+
+@item don't use the dot 
+for cons-ing, e.g. @code{(a b . c)} is not legal.
+
+@item strings 
+may contain escaped braces with special verbatim-like meaning.
+
+@item a string 
+whose ending doublequote is immediately followed by an underscore
+(e.g. @code{"example of international"_}) is localized by calling
+@code{gettext} at read time.
+
+@end itemize
+
+
+@c =======================================================================
+
+@node Main MELT syntax and features
+@subsection Main MELT syntax and features
+
+We list each key symbol in alphabetical order and provide a short
+derscription. Familiarity with some Lisp or Scheme dialect is
+required.
+
+@menu
+* MELT formals::
+* MELT ctypes::
+* MELT boxed values::
+* MELT objects and classes::
+* MELT function application::
+* MELT function abstraction and closures::
+* MELT message sending::
+* MELT syntax constructs::
+@end menu
+
+
+
+@node MELT formals
+@subsubsection MELT formals
+
+A formal argument list is a possibly empty list (between
+parenthesis). This list contains either ctype keywords or formal
+names. A ctype keyword apply to all further formals (until another
+ctype keyword, or end of formal arguments list. Ctypes have a keyword
+and are each described by a predefined instance (of
+@code{CLASS_CTYPE}) with a name conventionnally starting with
+@code{ctype_}.
+@cindex ctype MELT keyword
+[For experts: to add a new ctype, define a @code{BGLOB_CTYPE_*}
+predefined in @file{gcc/melt.h} and an instance in
+@file{warmelt-first.melt} using @code{install_ctype_descr}, then
+regenerate all the @file{gcc/warmelt-*.c} files]
+
+@node MELT ctypes
+@subsubsection MELT ctypes
+
+Here are the list of ctype-s.
+@cindex ctype in MELT
+
+@itemize
+@item @code{:value} (ctype instance @code{ctype_value})
+This ctype is for MELT [boxed] values. It is the default ctype of arguments.
+
+@item @code{:long} (ctype instance @code{ctype_long})
+This ctype is for unboxed long integers; it is also used for conditions and tests.
+
+@item @code{:tree} (ctype instance @code{ctype_tree})
+This ctype is for GCC @code{tree} raw pointers, as in @file{gcc/tree.h}.
+
+@item @code{:gimple} (ctype instance @code{ctype_gimple})
+This ctype is for GCC @code{gimple} raw tuple pointers, as in @file{gcc/gimple.h}.
+
+@item @code{:gimpleseq}  (ctype instance @code{ctype_gimple})
+This ctype is for GCC @code{gimple_seq} raw pointers, representing
+sequences of gimple instructions, as in @file{gcc/gimple.h}
+
+@item @code{:basicblock}  (ctype instance @code{ctype_basicblock})
+This ctype is for GCC @code{basic_block} raw pointers, representing
+basic blocks, as in @file{gcc/basic-block.h}
+
+@item @code{:edge}  (ctype instance @code{ctype_edge})
+This ctype is for GCC @code{edge} raw pointers, representing edges of
+the control flow graph, as in @file{gcc/basic-block.h}
+
+@item @code{:void}  (ctype instance @code{ctype_void})
+This ctype is the same as C @code{void} type. It should not be the
+type of formal arguments. It is only useful as the result type of
+side-effecting primitives.
+
+@item @code{:cstring} (ctype instance @code{ctype_cstring})
+This ctype is only for constant strings (like @code{const char[]} in
+C). It is not possible to build an unboxed @code{:cstring}. Every
+@code{:cstring} variable may only be bound to constant strings (not to
+something inside some heap).
+
+@end itemize
+
+MELT formal arguments appear in @code{lambda defun defprimitive
+defciterator multicall} forms. The first formal argument of
+@code{defun lambda multicall} constructs should -if given- be a
+@code{:value}. Ctype-s also appear in @code{let} bindings. Each MELT
+expression (or constant or variable) has a ctype (usually
+@code{:value}).
+
+The @code{:value} ctype is the only ctype for boxed values. Every
+other ctype is for unboxed stuff.
+
+
+@node MELT boxed values
+@subsubsection MELT boxed values
+
+@cindex minor MELT garbage collection
+@cindex full MELT garbage collection
+@cindex values in MELT
+@cindex boxed values in MELT
+
+Most data manipulated by MELT code are values. Values are allocated in
+the nursery generation of MELT heap, and are later (if alive) copied
+into GGC heap. A @emph{minor MELT garbage collection}, which runs
+quickly and often, only copies live values (in particular, local
+variables of MELT functions) out of the nursery, into the GGC heap. A
+@emph{full MELT garbage collection} also invokes the GGC collector, so
+scans the entire heap.
+
+MELT boxed values can be one of:
+
+@itemize
+
+@item nil
+@cindex nil MELT value
+(represented by the C @code{NULL} pointer and noted @code{()} in MELT)
+is a value. It is the initial or default value everywhere.
+
+@item multiples 
+@cindex multiple MELT value
+(or MELT tuples) - they are a fixed array of values agglomerated as a
+multiple.
+
+@item closures
+@cindex closure MELT value
+(or MELT functional values) represent a functional value, containing a
+routine and closed values; the only way of making closures is thru the
+@code{lambda} and @code{defun} syntactic constructs.
+
+@item routines
+@cindex routine MELT value
+are the reification of MELT functions (generated internally).
+
+@item lists
+@cindex list MELT value
+are singly linked lists of pairs. Efficient access to the first and
+last pair of the list are provided. Unlike in many other Lisps, lists
+are not simply pairs (but implemented as the grouping of the first and
+last pair contained in the list), so appending a list to another one,
+or a single value at the beginning or the end of a list, is a simple
+operation. Lists are never circular and have a finite length.
+
+@item pairs
+@cindex pair MELT value
+are like CONS pairs in most other Lisps. In particular, a list knows
+its first and last pair. The head of a pair is an arbitrary boxed
+value, but its tail is a pair or nil. 
+
+@item triples
+@cindex triple MELT value
+(rarely used) have arbitrary head and middle values, but the tail is a
+triple or nil. They could be used like A-lists' nodes in Lisp.
+
+@item integers
+@cindex integer MELT value
+(are actually boxed longs).
+
+@item strings
+@cindex string MELT value
+(are like boxed cstrings; they are immutable, so the characters inside
+them do not change; they are terminated by a null byte, like in C).
+
+@item string-buffers
+@cindex string-buffer MELT value
+(are mutable buffers of strings and may grow appropriately; they are a
+bit like C++ string streams).
+
+@item boxes
+@cindex box MELT value
+(like references in ML, are mutable boxed containers).
+
+@item objects
+@cindex object MELT value
+have values in their fields (or slots) and are described below; each
+MELT object has a class (which is also a MELT object), which are
+organized in a single-inheritance class hierarchy rooted at
+@code{CLASS_ROOT}.
+
+@item mixints
+@cindex mixints MELT value
+are mixing an arbitrary mutable MELT value and an integer.
+
+@item mixlocs
+@cindex mixlocs MELT value
+(for experts; they are mixing an arbitrary mutable MELT value and a
+@code{location_t} indicating a location inside e.g. a MELT or C source
+file).
+
+@item object maps
+@cindex object map MELT value
+are an hashtable association between MELT objects and arbitrary MELT
+non-null [boxed] values.
+
+@item string maps
+@cindex string map MELT value
+are an hashtable dictionnary mapping strings to arbitrary non-null
+MELT values.
+
+@item boxed ctypes
+@cindex boxed ctype MELT value
+Each @emph{ctype} has its boxed representation, which is a value
+containing the raw (unboxed) @emph{ctype} like @code{gimple} etc..
+
+@item boxed ctype maps
+@cindex boxed ctype map MELT value
+Each @emph{ctype} [except @code{:long :void :cstring}] has its boxed
+map, an hash table associating (non-null) stuff of the given ctype
+with arbitrary non-null MELT [boxed] values. For example, a gimple map
+associate GCC @code{gimple}s to arbitrary MELT non-null values
+(usually MELT objects). This is very useful to represent a
+relationship (conceptually an attribute) between @code{gimple}s and
+MELT values such as objects without having to enhance the definition
+of the @code{gimple} structure inside @file{gcc/gimple.h}
+
+@item special values
+@cindex special MELT values
+They are useful to represent stuff like MPFR things (arbitrary
+precision numbers), PPL coefficients, etc@dots{} The MELT runtime is able
+to run a sort of destructing C function when a special value is no
+more used, so the handling of special values is more expensive than
+for other values.
+
+@end itemize
+
+Notice that (contrarily to most other lisps) MELT symbols and MELT
+s-expressions are both objects (respectively of class
+@code{CLASS_SYMBOL} and @code{CLASS_SEXPR}). The reader function
+(which is not as versatile as in CommonLisp) deals with them.
+
+Adding additional MELT value types require enhancing the
+@file{gcc/melt.h} and @file{gcc/melt.c} files.
+
+@cindex discriminant for MELT values
+Each MELT [boxed] value starts with a @emph{discriminant}. This
+discriminant is a MELT object (it cannot be nil). The nil value has
+conceptually its own discriminant @code{DISCR_NULLRECV}, but is of
+course represented by C @code{NULL} pointer. Discriminants are used by
+the garbage collector (precisely to discriminate various MELT boxed
+data types using the object number of their discriminant), and by the
+MELT message sending machinery (hence messages sent to the nil MELT
+value are processed using the @code{DISCR_NULLRECV}
+discriminant). Each kind of MELT value has its own discriminant, but
+sometimes it is useful to have several discriminants possible for the
+same kind of MELT value. For example, MELT strings can have
+@code{DISCR_STRING} or @code{DISCR_VERBATIMSTRING} etc., and verbatim
+strings are handled specially (in particular when printing them inside
+generated C code). Every MELT [boxed] value has an immutable
+discriminant, set at the time of the value's creation.
+
+Conventionally MELT non-object values have a primitive to test them
+called like @code{is_*}, a primitive to build them called like
+@code{make_*} [which takes a discriminant as the first argument], and
+the accessing and modifying primitives share a common prefix. In
+particular, object maps are tested with @code{is_mapobject}, built
+with @code{make_mapobject}, accessed with @code{mapobject_get} and
+updated using the @code{mapobject_put} and @code{mapobject_remove}
+primitives. For more details, look into file
+@file{gcc/melt/warmelt-first.melt}.
+
+
+@node MELT objects and classes
+@subsubsection MELT objects and classes
+
+@cindex object MELT values
+@cindex MELT objects
+
+An important (and common) kind of MELT [boxed] values are MELT
+objects. A MELT object contains exactly
+
+@itemize
+@item the discriminant or class 
+@cindex MELT classes
+@cindex class in MELT
+of the object; as every [boxed] value, MELT objects starts with a
+discriminant; for objects, it is their @emph{class}, which is an
+object itself. We say ``@var{Cl} is the class of @var{Ob}'' or
+equivalently ``@var{Ob} is a [direct] instance of @var{Cl}'' when
+@var{Ob} is a MELT object of discriminant @var{Cl}.
+
+@item the hash code 
+of the object is an unsigned non-zero (more or less random, immutable
+i.e. fixed) integer, given at object build time (i.e. instanciation
+time).
+
+@item the object number 
+or @emph{objnum} of the object is a small unsigned short integer. It
+is usually assigned at object build time. For discriminants @var{Di},
+their objnum is also called the @emph{magic number} of the values
+@var{Va} of the given discriminant @var{Di}.
+
+@item the object length
+or size is the number of slots or fields of the objects. All objects
+@var{Ob} of a given class @var{Cl} have the same fixed number of slots
+(no more than 32767 slots and almost always a lot less, e.g. at most a
+dozen). Some objects could have a length of 0 (if their class is the
+@code{CLASS_ROOT} or has no direct or inherited fields), but this is
+very unusual.
+
+@item the object slots 
+or object fields are the values contained inside the object. These
+fields may be mutable; their number is fixed (it is the object
+length).
+
+@end itemize
+
+In practice, every object's slot is described by a field object (of
+class @code{CLASS_FIELD}) inside the object's class.
+
+Every discriminant (in particular every class) is an object with the following fields (or slots):
+@itemize
+@item @code{prop_table}
+is the property object map associating objects to values, and usable as a P-list.
+
+@item @code{named_name}
+is the boxed string naming the discriminant.
+
+@item @code{disc_methodict}
+is an object map associating selectors to closures (method implementations).
+
+@item @code{disc_super}
+is the super-discriminant (or the super-class for objects)
+
+@end itemize
+
+The root discriminant is @code{DISCR_ANYRECV}. The discriminant of the
+nil value is @code{DISCR_NULLRECV}. Other types of values have
+discriminants like @code{DISCR_ANYRECV DISCR_BASICBLOCK DISCR_BOX
+DISCR_CHARINTEGER DISCR_CLOSURE DISCR_EDGE DISCR_GIMPLE
+DISCR_GIMPLESEQ DISCR_INTEGER DISCR_LIST DISCR_MAPBASICBLOCKS
+DISCR_MAPEDGES DISCR_MAPGIMPLES DISCR_MAPGIMPLESEQS DISCR_MAPOBJECTS
+DISCR_MAPSTRINGS DISCR_MAPTREES DISCR_METHODMAP DISCR_MIXEDINT
+DISCR_MIXEDLOC DISCR_MULTIPLE DISCR_NAMESTRING DISCR_NULLRECV
+DISCR_PAIR DISCR_ROUTINE DISCR_SEQCLASS DISCR_SEQFIELD DISCR_STRBUF
+DISCR_STRING DISCR_TREE DISCR_VERBATIMSTRING}.  Some discriminants are
+specialized by having a meaningful (i.e. not @code{DISCR_ANYRECV})
+super-discriminant (i.e. the value inside the @code{:disc_super}
+slot). For example, @code{DISCR_METHODMAP} is used for object maps
+which are method maps (mapping a selector to a function implementing a
+method), instead of the plain @code{DISCR_MAPOBJECTS}.  [For experts:]
+It is possible to make additional discriminants using
+@code{definstance} with @code{CLASS_DISCR} as the class.
+
+Classes are discriminants, but in addition have the following fields
+(or slots):
+@itemize
+@item @code{class_ancestors}
+is the multiple (of discriminant @code{DISCR_SEQCLASS}) of the
+classes' ancestors. Testing that a given object has some given class
+as its direct class or indirect ancestor is quick (@code{is_a}
+primitive in MELT, @code{melt_is_instance_of} function in C code).
+
+@item @code{class_fields}
+is the multiple (of @code{DISCR_SEQFIELD}) of the classes' fields
+(both inherited from ancestors or own to the class).
+
+@item @code{class_objnumdescr}
+is usable for describing the objnum of instances.
+
+@item @code{class_data}
+is an additional slot for holding class data.
+@end itemize
+
+
+Fields are slot descriptors (objects of @code{CLASS_FIELD}), they are
+named (so inherit fields @code{prop_table named_name}). Their objnum
+is their index, their specific slots are
+@itemize
+@item @code{fld_ownclass}
+gives the class defining the field.
+@item @code{fld_typinfo}
+can be used for describing the field's type in instances.
+@end itemize
+
+Beware that the structure of classes, fields and discriminants is
+described not only in @file{warmelt-first.melt} but also ``built-in''
+in files @file{melt.c} and @file{melt.h} so changing them is
+very tricky.
+
+Fields should have a @emph{globally unique} name. Conventionally,
+fields common to the same class share a common prefix for their name.
+
+The @code{defclass} construct builds and fills class and fields
+objects. Don't make instances of @code{CLASS_CLASS} or
+@code{CLASS_FIELD} otherwise!
+
+Objects are built using the @code{make_instance} construct, or
+statically using @code{definstance}. In addition, @code{defselector
+defclass} also statically build objects (likes classes and fields).
+
+Exporting a class means exporting the class object and its own fields.
+
+@node MELT function application
+@subsubsection MELT function application
+
+Function applications are noted @code{(@var{fun} @var{args}
+@var{@dots{}})}. There may be no arguments, e.g. just
+@code{(@var{fun})}. If arguments are given, the first argument must be
+a @code{:value}. So @code{(f 1 x)} is incorrect (because @code{1} is
+an unboxed @code{:long}); use @code{(f x 1)} instead. Usually, the
+@var{fun}ction is just a variable bound to a function, but it may be a
+more complex expression, like @code{((if (p x) f g) x y)} which,
+depending on the test @code{(p x)} applies either @code{f} or @code{g}
+to @code{x y}.
+
+The application of a non-function returns null. The
+@code{melt_apply} C function doing the application checks that the
+applied function is indeed a function (ie a closure). Function
+applications are never tail-recursive; they always consume some stack
+space.
+
+Named functions are defined using the @code{defun} construct, using a
+Common Lisp like syntax (not the Scheme @code{define}). If the formal
+arguments list is not empty, its first element (the first formal
+argument of a named or anonymous function) should be a @code{:value}.
+
+Functions are not polytopic nor polymorphic; their signature is
+essentially fixed. They should expect a fixed number of arguments
+[there is no variable argument facility in MELT], each with a defined
+ctype (the first argument should be a @code{:value}), and return a
+fixed number of results (the first result should be a @code{:value})
+each with a defined ctype. An argument which has not the expected
+ctype or is missing is initialized to null or 0. Likewise a secundary
+result which has not the expected ctype is ignored or set to null or
+0.
+
+A function should [always] return a primary result of ctype
+@code{:value} and may also return secondary results (using the
+@code{return} construct). The only way of getting the secondary
+results of a function call (or a message send) is thrue the
+@code{multicall} construct, which binds all the results of the call or
+send to the formal arguments in the @code{multicall}. Function
+applications not done in a @code{multicall} have all their secondary
+results (if any) ignored.
+
+@node MELT function abstraction and closures
+@subsubsection MELT function abstraction and closures
+
+Function abstraction (i.e. making anonymous functions) is done using
+the @code{lambda} construct. @emph{Only values can be closed}, hence
+it is not possible to close a non-boxed value, so @code{(let ( (:long
+one 1) ) (lambda (a) (f a one)))} is incorrect (and rejected by the
+MELT translator).
+
+Actually, every MELT function is really a closure, so @code{defun}
+binds a name to the closure which is the named function.
+
+
+Closures are @code{:value}s. Use the @code{is_closure} primitive to
+test tha a given value is indeed a closure. The only way of building
+closures is thru @code{lambda} or @code{defun}. Closures contain a
+routine pointer (routines are also @code{:values}) and closed
+values. [For experts] the size of a closure is available thru the
+@code{closure_size} primitive. Its routine is available thru
+@code{closure_routine} primitive. To get its n-th closed value, use
+the @code{closure_nth} primitive. At MELT runtime, each MELT call
+frame for MELT function application (or message sending) knows its
+closure.
+
+Routines correspond to MELT generated C functions (with their constant
+values).
+
+
+@node MELT message sending
+@subsubsection MELT message sending
+
+A message invocation is done using the construct
+@code{(@var{selector-name} @var{reciever} @var{args} @var{@dots{}})}. This
+construct is syntactically the same as function (or primitive)
+application, and is discriminated by the fact that the
+@var{selector-name} has been previously defined with
+@code{defselector} or is imported as bound to an instance of
+@code{CLASS_SELECTOR}. The selector should be such a name and cannot
+be an expression. The @var{reciever} can be any @code{:value} (even
+null). The @var{args} are optional and can have any ctype (but a
+selector should have a fixed and well defined signature). Use
+@code{export_values} to export selectors.
+
+A method is just a functional value, installed thru the
+@code{install_method} function. This function expects a discriminant
+or class, a selector, and a function (the method). Method installation
+is very dynamic and can be done at any time.
+
+A message invocation (i.e. an expression starting with a selector) can
+be done on any boxed value. If it is an object, its class is used;
+otherwise its discriminant is used (so @code{DISCR_NULLRECV} is used
+when sending to nil). To send a message of selector @var{sel} (an
+instance of @code{CLASS_SELECTOR}) to a reciever @var{recv} of
+discriminant (e.g. the class of an object) @var{dis}, the following
+procedure is used:
+
+@itemize
+
+@item @var{dis} should be a discriminant;
+if it is not an instance of @code{CLASS_DISCR}, stop and do nothing.
+
+@item get the @code{discr_methodmap} slot of @var{dis}; 
+it should be an object map (i.e. a ``dictionnary'' of methods) that we
+call @var{md}.
+
+@item get the method @var{meth} 
+associated to @var{sel} in @var{md}; if @var{meth} is a function
+(i.e. a boxed MELT closure), apply @var{meth} to the reciever
+@var{recv} and any additional arguments. This ends the message
+invocation.
+
+@item otherwise,
+no method is found, so replace @var{dis} by its super-discriminant
+(its slot @code{disc_super}) and repeat again. Hence, methods are also
+looked in superclasses, etc@dots{} so are properly inherited.
+
+@end itemize
+
+Notice that message invocation is more dynamic (hence slower) than
+e.g. C++ virtual member functions, and that method maps can be
+upgraded at any time.
+
+@node MELT syntax constructs
+@subsubsection MELT syntax constructs
+
+The table below gives MELT syntax constructs, in alphabetical
+order. [Experts can add new constructs using macros, and implementing
+appropriate methods in the MELT translator].
+
+@table @code
+
+@item and
+@cindex @code{and} MELT syntax
+@code{(and @var{e1} @var{e2} @var{e3} @var{@dots{}})} is (like in all
+Lisps) used for sequential conjunction; it is the same as @code{(if
+@var{e1} (if @var{e2} @var{e3}))} etc@dots{} Any number (at least one) of
+conjuncts are possible. All the conjuncts (@var{e1} @var{@dots{}}) should
+have the same ctype (usually @code{:value}).
+
+@item assert_msg
+@cindex @code{assert_msg} MELT syntax
+@cindex @code{assert_failed} MELT primitive
+@code{(assert_msg @var{msg} @var{check})} aborts when @var{check} is
+false (using the @code{assert_failed} primitive, giving the source file
+position) and displays the given @var{msg}, when GCC is built for
+debugging with @code{ENABLE_CHECK}. If GCC is not built for debugging,
+neither operand is used. The entire @code{assert_msg} expression
+evaluates to nil.
+
+@item comment
+@cindex @code{comment} MELT syntax
+@code{(comment @var{msg})} evaluates to nil and output the @var{msg}
+as a C comment in the C translation. Don't use @code{*/} or @code{*/}
+in @var{msg}. When a @code{comment} appears at the beginning of a MELT
+compilation unit, it appears at the beginning of the generated C file;
+this is useful for making copyright notices appear both in the MELT
+source file and the generated C code.
+
+@item compile_warning
+@cindex @code{compile_warning} MELT syntax
+@code{(compile_warning @var{msg} @var{exp})} evaluates like @var{exp} but also
+emits a message at MELT compilation time. Intended use is similar to
+@code{#warning} in C.
+
+@item cond
+@cindex @code{cond} MELT syntax
+@code{(cond @var{condition1} @var{condition2} @var{@dots{}})} is -like in
+all Lisps- a conditional evaluation. Each condition is
+@code{(@var{test} @var{then1} @var{then2} @var{@dots{}} @var{thenk})} so
+the @var{test} is evaluated. If it is true, all the @var{then}s are
+evaluated in sequence, and the last is the result of the whole
+@code{cond} expression. The last condition can be @code{(:else
+@var{else1} @var{@dots{}} @var{elsek})}; if no previous test succeeded,
+all the @var{else}s are sequentially evaluated, and the last of them
+is the whole @code{cond} result. Notice that @code{(cond (@var{test1}
+@var{then1}) (@var{test2} @var{then2a} @var{then2b}) (:else
+@var{else1} @var{else2} @var{else3}))} is the same as @code{(if
+@var{test1} @var{then1} (if @var{test2} (progn @var{then2a}
+@var{then2b}) (progn @var{else1} @var{else2})))}.
+
+@item cppif
+@cindex @code{cppif} MELT syntax
+[for experts] @code{(cppif @var{name} @var{then-cpp} @var{else-cpp})} is translated
+using a C directive @code{#if @var{name}} to the translation of
+@var{then-cpp} or @var{else-cpp}.
+
+@item current_module_environment_container
+@cindex @code{current_module_environment_container} MELT syntax
+[for experts] @code{(current_module_environment_container)} evaluates
+to an object of @code{CLASS_CONTAINER} containing the current module
+environment.
+
+@item debug_msg
+@cindex @code{debug_msg} MELT syntax
+@code{(debug_msg @var{expv} @var{msg} [@var{count}])} -where the
+@var{count} expression (of ctype @code{:long}) is usually ommitted- is
+useful for debugging ouput of the value of @var{expv} (with the
+@code{-fmelt-debug} program option) to output, using the
+@code{debug_msg_fun} function. The entire @code{debug_msg} expression
+is somehow equivalent to @code{(cppif ENABLE_CHECKING (debug_msg_fun
+@var{expv msg count filename lineno}) ())} and evaluates to nil.
+
+@item defciterator
+@cindex @code{defciterator} MELT syntax
+The form @code{(defciterator @var{iter-name} @var{start-formals}
+@var{state-symbol} @var{local-formals} @var{before-expansion}
+@var{after-expansion})} defines a C-iterator named
+@var{iter-name}. The @var{start-formals} is a [binding] list of formal
+arguments [given to the C-iterator].  The @var{state-symbol} is usable
+in the expansions, where it is expanded to a unique C identifier. The
+@var{local-formals} is a [binding] list of variables local to the
+expanded block. The @var{before-expansion} and @var{after-expansion}
+are lists of items like strings (appearing as is in the C expansion)
+or symbols (either from the start formals, or the local formals, or
+the state symbol).
+
+@item defclass
+@cindex @code{defclass} MELT syntax
+The form @code{(defclass @var{class-name} [:predef @var{predefined}]
+[:super @var{superclass-name}] :fields @var{fields-list})} defines a
+class named @var{class-name} of super-class named
+@var{superclass-name} with the given @var{fields-list} (a list of
+field names) and an optional @var{predefined} name (for predefined
+classes [giving a @var{predefined} is for experts]).
+
+@item defcmatcher
+@cindex @code{defcmatcher} MELT syntax.
+The form @code{(defcmatcher @var{cmatcher-name} @var{match&in-formals}
+@var{out-formals} @var{state-sym} @var{test-expansion}
+@var{fill-expansion} @var{oper-expansion})} defined a matching
+construct by its C translation. The @var{match&in-formals} gives the
+matched thing ctype (as the first formal argument, either a boxed
+value or a raw stuff) and input arguments (rest of formals). The
+@var{out-formals} are the signature of the deconstructed things.  The
+@var{test-expansion} expands (as a C boolean-like expression) to the
+test part of the match.  The @var{fill-expansion} expands (as a
+sequence of C instructions) to the deconstructing part. The
+@var{oper-expansion} is used, much like in primitives, when the
+@var{cmatcher-name} appears as an operator in an expression context.
+
+@item definstance
+@cindex @code{definstance} MELT syntax
+The form @code{(definstance @var{instance-name} @var{class-name}
+[:predef @var{predefined}] [:obj_num @var{object-number}]
+@var{:field-name} @var{field-value} @var{@dots{}})} statically defines an
+instance of name @var{instance-name} of the class
+@var{class-name}. [expert usage: a @var{predefined} name and an
+@var{object-number} may also be given].
+
+@item defprimitive
+@cindex @code{defprimitive} MELT syntax
+The form @code{(defprimitive @var{primitive-name}
+@var{formals-arglist} @var{ctype} @var{expansion} @var{@dots{}})}
+statically defines a C primitive named @var{primitive-name} of a given
+@var{formals-list} and given return @var{ctype}. The @var{expansion}-s
+are either strings or formal names.
+
+@item defselector
+@cindex @code{defselector} MELT syntax
+The form @code{(defprimitive @var{selector-name} @var{selector-class}
+@var{:field-name} @var{field-value} @var{@dots{}})} defines a
+selector. Usually @var{selector-class} is @code{CLASS_SELECTOR}, and
+no other @var{field}s are given. Once a name is bound to a selector,
+every further occurrence of that name in operator position is
+considered as a message invocation.
+
+@item defun
+@cindex @code{defun} MELT syntax
+The form @code{(defun @var{function-name} @var{formals-list}
+@var{body} @var{@dots{}})} define a function named
+@code{function-name}. The ctype of the first (if any) formal argument
+(in the @var{formals-list}) should be a @code{:value}. The
+@code{function-name} can appear in the given @var{body} (for
+recursion).
+
+@item exit
+@cindex @code{exit} MELT syntax
+The form @code{(exit @var{loop-label} @var{expr} @var{@dots{}})}, only
+used inside @code{forever} loops, causes the lexically enclosing
+@code{forever} loop named by @var{loop-label} to be exited, after
+evaluation of the @var{expr}s. The last such value (or nil if no
+@var{expr} is given) is the result returned by the @code{forever}
+loop. @code{exit} forms are similar to Ada's @code{exit} or C
+@code{break} (not to @code{longjmp}). The @code{exit} should be local
+to the containing procedure: it cannot jump across @code{lambda}s.
+
+@item export_class
+@cindex @code{export_class} MELT syntax
+The form @code{(export_class @var{class-name} @var{@dots{}})} export all
+the given @var{class-name}s and their fields.
+
+@item export_macro
+@cindex @code{export_macro} MELT syntax
+[For experts] The form @code{(export_macro @var{macro-symbol}
+@var{expander})} exports a macro binding for the given
+@var{macro-symbol} with the @var{expander} function. The macro
+@code{macro-symbol} is defined in the environment exported by the
+current module, so is available in other modules only (but not in the
+current one).
+
+@item export_patmacro
+@cindex @code{export_patmacro} MELT syntax
+[For experts, not implemented] The form @code{(export_patmacro
+@var{patmacro-symbol} @var{pat-expander} @var{mac-expander})} exports
+a pattern macro binding for the given @var{patmacro-symbol} with the
+@var{pat-expander} as a pattern expanding function (used in patterns)
+and the @var{mac-expander} as a macro expanding function (used in
+expressions).
+
+@item export_values
+@cindex @code{export_values} MELT syntax
+The form @code{(export_values @var{exported-name} @var{@dots{}})} export
+all the names, as values, given as arguments. For classes,
+@code{export_class} should be used, otherwise the fields are not
+exported.
+
+@item fetch_predefined
+@cindex @code{fetch_predefined} MELT syntax
+[For experts] @code{(fetch_predefined @var{predefined-name-or-number})}
+
+@item forever
+@cindex @code{forever} MELT syntax
+@code{(forever @var{label-name} @var{body} @var{@dots{}})}  when
+evaluated, the bodies are evaluated in sequence, and indefinitely
+re-evaluated again. The only way of getting out from a @code{forever}
+loop is with @code{exit} (using the given @var{label-name}, lexically
+inside the body) or @code{return}. Avoid using a bound variable name
+as a @var{label-name}.
+
+@item get_field
+@cindex @code{get_field} MELT syntax
+@code{(unsafe_get_field @var{:field-name} @var{expr})} retrieves the
+field named @var{:field-name} from the object returned by @var{expr}
+expression. If it is not an appropriate object (of the class owning
+the @var{:field-name}) , gives nil.
+
+@item if
+@cindex @code{if} MELT syntax
+@code{(if @var{test} @var{then-exp} [@var{else-exp}])}. When
+evaluated, the @var{test} is first evaluated. If it is true, the
+@var{then-exp} is evaluated and is the result of the whole
+@code{if}. If it is false (either 0 if ctype-d @code{:long}, or the
+null pointer for @code{:value} and other ctypes), the optional
+@var{else-exp} is evaluated (or 0 or null) and is the result of the
+whole @code{if}. Both the @var{then-exp} and the @var{else-exp} (if
+given) should have the same ctype.
+
+@item instance
+@cindex @code{instance} MELT syntax
+@code{(instance @var{class-name} [@var{:field-name} @var{field-value}]
+@var{@dots{}})} is a constrctive expression for instances, where the
+@var{class-name} is the name of a class (it cannot be a complex
+expression but should be a class statically known) and where each
+@var{:field-name} keyword (starting with a colon) is the name of some
+field (direct or inherited) of the class and the following
+@var{field-value} is an expression giving its initial value; the
+result of @code{instance} is a freshly built instance of the given
+@var{class-name} initialized with the fields (fields which are not
+mentionned are initialized with nil).
+
+@item lambda
+@cindex @code{lambda} MELT syntax
+@code{(lambda @var{formal-args} @var{body} @var{@dots{}})} is a
+constructive expression for function abstraction, it returns a
+closure, the anonymous function taking @var{formal-args} as arguments
+and evaluating sequentially the @var{body} expressions, returning the
+value of the last one. The first argument of a function and the first
+result that it is returning should be a @code{:value}.
+
+@item let
+@cindex @code{let} MELT syntax
+@code{(let (@var{let-binding} @var{@dots{}}) @var{body} @var{@dots{}}) is a
+sequential binding construct (closer to @code{let*} in other
+Lisps)}. The first operand should be a list of
+@var{let-binding}s. Others operands make the @var{body}, evaluated in
+sequence with the new bindings applied with lexical scoping. A
+@var{let-binding} is an optional @emph{ctype} (@code{:value} by
+default) followed by a variable name (ie a symbol) followed by one
+expression. Variables bound by previous @var{let-binding}s are visible
+in the expression inside the current @var{let-binding} (so recursion
+is not permitted like with @code{flet} or @code{letrec} in some
+Lisps). Notice that a @var{let-binding} can bind a variable to unboxed
+stuff (like a plain long integer). The result of the whole @code{let}
+expression is the result of the evaluation of the last body
+expression, done with the new bindings.
+
+@item letrec
+@cindex @code{letrec} MELT syntax
+@code{(let (@var{letrec-binding} @var{@dots{}}) @var{body} @var{@dots{}})} is a
+recursive binding construct. The letrec bindings should only bind
+@emph{constructive expressions}, that is @code{lambda}-s, @code{tuple}-s,
+@code{instance}-s and @code{list}-s.
+
+@item list
+@cindex @code{list} MELT syntax
+@code{(list @var{expr} @var{@dots{}})} is a constructive expressions
+for lists. It returns a tuple
+made of the arguments.
+
+
+@item match
+@cindex @code{match} MELT syntax
+@code{(match @var{expr} @var{match-case} @var{@dots{}} )} @emph{NOT
+IMPLEMENTED YET} Do a pattern match. Evaluate @var{expr} and for the
+first maching @var{match-case}, do its body. There is no @code{:else}
+clause, use the joker pattern @code{?_} for that purpose. A
+@var{match-case} is a simple match case @code{(@var{pattern}
+@var{body} @var{@dots{}})} where @var{body} is evaluated with the
+pattern variables appearing in @var{pattern} bound. A @var{match-cas}
+can be a when match case @code{(:when @var{pattern} @var{when-cond}
+@var{body} @var{@dots{}})} where the body is done when that pattern
+matches and the @var{when-cond} (evaluated with the pattern variables
+bound) is a true condition.
+
+@item multicall
+@cindex @code{multicall} MELT syntax
+@code{(multicall (@var{result-formals}) @var{call-expr} @var{body}
+@var{@dots{}})}  is the only way to retrieve multiple (one primary and
+some secondary) results from a function application or a message
+invocation @var{call-expr} (which should syntactically be an
+application or an invocation, not anything else). The
+@var{result-formals} are syntactically like formal arguments;
+@xref{MELT formals}. The first result formal should be of ctype
+@code{:value}. Secondary result formals which are not matching the
+ctype of the actual secondary result are cleared. The bindings of the
+result formals are local to the @code{multicall} expression and usable
+in the @var{body} sequence.
+
+@item or
+@cindex @code{or} MELT syntax
+@code{(or @var{e1} @var{e2} @var{e3} @var{@dots{}})} is the sequential
+disjunction of @var{e1} @var{@dots{}} (at least one disjunct). In
+particular @code{(or @var{a} @var{b})} is the same as @code{(if
+@var{a} @var{a} @var{b})} except that @var{a} is evaluated once. All
+the disjuncts should have the same ctype (usually @code{:value}).
+
+@item parent_module_environment
+@cindex @code{parent_module_environment} MELT syntax
+[For experts] @code{(parent_module_environment)} return the parent
+module's environment.
+
+@item progn
+@cindex @code{progn} MELT syntax
+@code{(progn @var{e1} @var{e2} @var{@dots{}} @var{en})} evaluates
+successfully @var{e1} then @var{e2} and return the value of the last
+@var{en}.
+
+@item put_fields
+@cindex @code{put_fields} MELT syntax.
+@code{(put_fields @var{obj} @var{:field-name1} @var{val1}
+@var{@dots{}})}  updates the object value of @var{obj} by changing its
+field named @var{:field-name1} to the value of @var{val1} etc@dots{}
+(all the fields are updated at once). It is safe, in the sense that if
+@var{obj} is not an object of the appropriate class, nothing happens.
+
+@item quote
+@cindex @code{quote} MELT syntax
+@code{(quote x)} is the same as @code{'x} and returns the symbol
+@code{x} itself (as an instance of @code{CLASS_SYMBOL}). When applied
+to an integer, like @code{'1}, it gives a constant boxed integer value
+(of @code{DISCR_INTEGER}). When applied to a string, like
+@code{'"string"}, it gives a constant boxed string value (of
+@code{DISCR_STRING}). Therefore, when passed as an actual argument (to
+a primitive, a function, ...) @code{'1} (a boxed integer value) is not
+the same as @code{1} (a raw integer stuff), and likewise @code{'"abc"}
+is a boxed string value, different of @code{"abc"} (a raw string
+stuff).  This is very different from other Lisps!  Only symbols,
+strings, integers can be quoted.
+
+
+@item return
+@cindex @code{return} MELT syntax
+@code{(return @var{e1} @var{@dots{}})} return from the entire containing
+function (i.e. @code{defun} or @code{lambda}). The first expression
+@var{e1} should be of ctype @code{:value} and is evaluated as the
+primary result. Other expressions are evaluated (and can have
+different ctypes) and returned as secondary results. A @code{(return)}
+without argument is a convenience for returning the nil value. The
+ctype of the @code{return} is @code{:value} even if the @code{return}
+expression itself does not gives a value (because it breaks the
+control flow), hence @code{(or (return) 'x)} is acceptable but
+tasteless.
+
+@item setq
+@cindex @code{setq} MELT syntax
+@code{(setq @var{var} @var{exp})} assigns to the local variable
+@var{var} the value of @var{exp} (which is also the value of the
+entire @code{setq} expression). Both @var{var} and @var{exp} should
+have the same ctype.
+
+@item store_predefined
+@cindex @code{store_predefined} MELT syntax
+[Expert] @code{(store_predefined @var{predef-name-or-number}
+@var{expr})} Don't use it if you don't understand. 
+
+@item tuple
+@cindex @code{tuple} MELT syntax
+@code{(tuple @var{expr} @var{@dots{}})} is a constructive expressions
+for tuples (or multiples). It returns a tuple made of the arguments.
+
+@item unsafe_get_field
+@cindex @code{unsafe_get_field} MELT syntax
+@code{(unsafe_get_field @var{:field-name} @var{expr})} retrieves the
+field named @var{:field-name} from the object returned by @var{expr}
+expression (of ctype @code{:value}). If @var{expr} does not evaluates
+to an object instance (directly or indirectly) of the class defining
+the @var{:field-name} the behavior is undefined, and unsafe (GCC
+usually crashes).
+
+@item unsafe_put_fields
+@cindex @code{unsafe_put_fields} MELT syntax
+@code{(unsafe_put_fields @var{obj} @var{:field-name1} @var{val1}
+@var{@dots{}})}  updates the object value of @var{obj} by changing its
+field named @var{:field-name1} to the value of @var{val1} etc@dots{} (all
+the fields are updated at once). If @var{obj} is not an object of the
+appropriate class for the fields, the behavior is undefined and unsafe
+(usually GCC crashes).
+
+@item update_current_module_environment_container
+@cindex @code{update_current_module_environment_container} MELT syntax
+[Expert] @code{(update_current_module_environment_container)} don't
+use it if you don't understand.
+
+@end table
+
+
+@node MELT modules and translation
+@subsection MELT modules and translation
+
+[for experts mostly; familiarity with the notions of bindings and
+environments is expected.]
+
+@menu 
+* MELT environments and bindings::
+* translating a MELT module::
+* MELT module initialization and exports::
+* MELT translation steps::
+@end menu
+
+@node MELT environments and bindings
+@subsubsection MELT environments and bindings
+
+A MELT module uses previously available bindings (imported values,
+etc..) and provides its own bindings (exported values,
+etc..). Bindings are objects (of superclass @code{CLASS_ANY_BINDING},
+e.g. of some class like @code{CLASS_VALUE_BINDING}
+@code{CLASS_MACRO_BINDING} @code{CLASS_PATMACRO_BINDING}
+@code{CLASS_INSTANCE_BINDING} etc@dots{}). Bindings are grouped in
+environments (themselves objects of class
+@code{CLASS_ENVIRONMENT}). Each environment is linked to its
+parent. So a MELT module is initialized in its parent module
+environment and gives its own module environment.
+
+Hence MELT environments are objects with a @code{env_bind} field (the
+object map of bindings), a @code{env_prev} field (the previous
+environment), etc@dots{} All bindings are objects with a @code{binder}
+field (the bound ``name'', e.g. a symbol, used as the key in the
+binding map of environments).
+
+User MELT code is ordinarily not supposed to explicitly change
+environments and bindings (but they are changed implicitly at module
+initialization).
+
+Advanced MELT extension developers might rarely use with caution the
+@code{current_module_environment_container} -which is actually a
+reference, not a container- and @code{parent_module_environment}
+macros to obtain the current and parent environments.
+
+@node translating a MELT module
+@subsubsection translating a MELT module
+
+@cindex translation of MELT 
+A MELT file @file{@var{foo}.melt} [which can be viewed as defining the
+@var{foo} MELT module] is translated into a C source
+@file{@var{foo}.c} which is then compiled into a dynamically loadable
+shared library - usually @file{@var{foo}.so} on Linux. The translation
+to C is done using @code{cc1} or @code{gcc -c}
+with the @code{-f[plugin-arg-]melt-mode=translatefile -f[plugin-arg-]melt-arg=@var{foo}.melt
+-fmelt-secondarg=@var{foo}.c} options. The generated file
+@var{foo}.c is usually quite big (and only @code{#include}-ing one
+file, @code{"run-melt.h"} which includes all the rest). It
+essentially contains one static C function (of signature compatible
+with @code{melt_apply}) for each @code{defun} or @code{lambda}
+function in MELT, and one big exported @code{melt_start_this_module} C
+function which does all the initializations, and some other stuff. The
+initialization code builds all the required data (quoted symbols,
+closures, classes, fields, boxed strings, static instances defined
+thru @code{definstance} etc..); MELT modules have no data outside of
+this @code{melt_start_this_module} function.
+
+The start function @code{melt_start_this_module} (which is found by
+dynamic loading of the module, usually thru @code{dlopen} and
+@code{dlsym} or their equivalent, and called only once) expects a
+parent environment and returns the newly filled module
+environment@footnote{There is an ordered sequence of MELT modules, the
+very first, @code{warmelt-first}, is being translated specially and gets
+a nil parent.}.
+
+To generate a MELT binary module from a MELT source file, use 
+@code{-fmelt-mode=translatetomodule}.
+
+@node MELT module initialization and exports
+@subsubsection MELT module initialization and exports
+
+@cindex modules in MELT 
+Names defined (as a function thru @code{defun}, as a class thru
+@code{defclass}, as a field, etc@dots{}) are not visible outside their
+module (to further MELT modules loaded afterwards) unless they are
+@emph{exported}. Most names (e.g. functions, selectors, instances) are
+exported as values using the @code{export_values} construct. Classes
+are usually exported using @code{export_class}@footnote{If a class is
+exported using @code{export_value} -almost always a mistake-, its
+fields are not visible outside.}, which also exports all the own
+fields of the exported class (but inherited fields are not exported,
+unless their class was @code{export_class}-ed).
+
+Advanced users can extend the MELT language by exporting macros using
+the @code{export_macro} construct, which gets a macro name and its
+macro expander function, which takes as arguments the source
+expression (of @code{CLASS_SEXPR}), the environment (of
+@code{CLASS_ENVIRONMENT}), the current expander, and produces an
+instance of a subclass of @code{CLASS_SRC}.
+
+@node MELT translation steps
+@subsubsection MELT translation steps
+
+The generated C code is of much lower level than the MELT source. The
+MELT source code is usually in a file but can be elsewhere (a list or
+s-exprs in memory).
+
+The generated C code interacts with MELT runtime and garbage
+collector; in particular, every value -even temporary ones- should be
+explicitly stored in MELT frames known by the GC. Hence, MELT
+expressions are quickly normalized : @code{(f (g x) y)} becomes
+something similar to @i{@b{let} gg = g x @b{in} f gg y}@footnote{We
+use ML like syntax to emphasize that this is only an internal MELT
+representation, not an s-expr!} where @i{gg} is a fresh variable
+(actually an instance of @code{CLASS_CLONEDSYMBOL}).
+
+@cindex reader in MELT 
+@cindex s-expression in MELT 
+The @emph{reader}, or some other source, provides a list of
+s-expressions to be translated. Each such s-expression is an instance
+of @code{CLASS_SEXPR} so has @code{prop_table loca_location
+sexp_contents} as fields. The @code{:loca_location} field is a mixloc
+giving the staring position and file of the s-expr. The
+@code{:sexp_contents} is a list value containing the s-expression
+elements. Leafs are read specifically, e.g. boxed integers (of
+@code{DISCR_INTEGER}) for integers, or symbols (instances of
+@code{CLASS_SYMBOL}) or keywords (instances of @code{CLASS_KEYWORD},
+etc. All these classes are defined in @file{warmelt-first.melt}.
+
+@cindex macro-expansion in MELT 
+Then s-expressions are @emph{macro-expanded} into objects of
+subclasses of @code{CLASS_SRC}. Standard macros (in particular all the
+constructs defined above, @pxref{MELT syntax constructs}.) are defined
+in @file{warmelt-macro.melt}. For instance, the @code{if} macro is
+expanded by the @code{mexpand_if} expander function (private to
+@file{warmelt-macro.melt}) which makes an instance of
+@code{CLASS_SRC_IFELSE} with fields @code{:src_loc sif_test :sif_then
+:sif_else} and this @code{mexpand_if} expander is given to
+@code{export_macro}. Macro expanders might need some of
+@code{expand_apply lambda_arg_bindings macroexpand_1} @dots{}
+functions defined in @file{warmelt-macro.melt}.
+
+@cindex normalization in MELT 
+@cindex nrep in MELT 
+After macro-expansion, the expanded source code (instances of some
+subclass of @code{CLASS_SRC}) is @emph{normalized} into instances of
+subclasses of @code{CLASS_NREP} (for normal representations,
+i.e. @emph{nrep}s) by code in @file{warmelt-normal.melt}. Normal
+expressions are not nested, so we separate simple nreps from complex
+normal expressions (@code{CLASS_NREP_SIMPLE} vs
+@code{CLASS_NREP_EXPR}). Normalization means not only adding extra
+internal lets (i.e. instances of @code{CLASS_NREP_LET} but sometimes
+computing additional information, such as the ctype of many
+expressions. Normalization is in particular done with the
+@code{normal_exp} selector (returning the nrep primarily and
+secundarily a list of additional bindings), and other utilities such
+as @code{normalize_tuple get_ctype wrap_normal_letseq} etc@dots{} For
+instance the normalization of @code{if} constructs is done in the
+@code{normal_exp} method for @code{CLASS_SRC_IF}, in a private
+function called @code{normexp_if} which returns an instance of
+@code{CLASS_NREP_IF} with fields @code{:nrep_loc nif_test :nif_then
+:nif_else :nif_ctyp} and a list of additional normal bindings (of
+@code{CLASS_NORMLET_BINDING}). Macro-expansion and normalization
+sometimes give simpler representations; e.g. all of @code{if and or}
+constructs get normalized as instances of @code{CLASS_NREP_IF}.
+
+@cindex code generation in MELT
+@cindex objcode in MELT
+After normalization, nreps (which are expression-like) are transformed
+in the ``code generation''@footnote{this is not a proper term, since
+the generated code is only a representation of low level C code.} step
+into instruction-like representations called @emph{objcode}s .
+instances of subclasses of @code{CLASS_OBJCODE}. This happens in
+@file{warmelt-genobj.melt} using the @code{compile_obj} selector,
+which, applied to nreps and a generation context (a merge of various
+info), produce objcodes. Moving from nreps expressions to instructions
+involve very often putting a destination on an nrep thru the
+@code{put_objdest} selector.
+
+@cindex code output in MELT
+At last, the objcode is output, within the @file{warmelt-outobj.melt}
+file, in two string-buffers (one for the header part, one for the body
+part) using several selectors like @code{output_c_code
+output_c_declinit output_c_initfill output_c_initpredef}. Only once
+all objcodes has been output in string buffers is it actually spilled
+to the generated C file, all at once.
+
+Advanced users can extend the MELT language by implementing extensions
+at various levels of the MELT translator.
+
+Several important data or functions are available thru the
+@code{initial_system_data} instance (the only instance of
+@code{CLASS_SYSTEM_DATA}), including the exporting and importing
+machinery, the fresh module environment maker, the symbols and
+keywords dictionnaries and internizers.
+
+
+All the MELT translation occur in @file{warmelt-*.melt} files which
+generate their @file{warmelt-*.c} counterparts (these generated files
+are distributed with GCC sources). Be careful to minimize the
+interaction between these files and the rest of GCC (in particular,
+avoid having a strong dependecies between GCC internal data
+representations - like @code{gimple}) to be able to regenerate the
+translating and translated files @file{warmelt-*.c} from
+@file{warmelt-*.melt} even when GCC internal passes
+evolve@footnote{using the @code{upgrade-warmelt} make target.}.
+
+
+
+
+@node Writing GCC passes in MELT 
+@subsection Writing GCC passes in MELT
+
+[For experts, knowing about GCC passes in general]
+
+GCC passes can be written in MELT. See the @file{ana-*.melt} files.
+
+@node Writing C code for MELT
+@section Writing C code for MELT
+
+[For experts] Sometimes (i.e. to implement a new primitive) it may be
+necessary to write some C code for MELT. We describe here the coding
+conventions to follow, in particular because MELT has a copying
+generational garbage collector (which changes pointers when copying
+values out of the nursery).
+
+Above all, @emph{avoid coding in C} (a cumbersome task) and
+@emph{prefer writing MELT code} when possible.
+
+Remember that MELT pointers can move at every allocation and every
+MELT related call.
+
+First, a real example. To box a long integer into a MELT value, MELT
+code have to use the @code{make_integerbox} defined in
+@file{warmelt-first.melt} as
+@lisp
+(defprimitive make_integerbox (discr :long n) :value
+  #@{(meltgc_new_int((meltobject_ptr_t)(" discr "), (" n ")))@}#
+@end lisp
+If the passed @code{discr} is not a discriminant for boxed integers,
+@code{make_integerbox} gives nil.
+
+To get the boxed integer's content, use the @code{getint} primitive in
+MELT. To test if a value is a boxed integer, use the
+@code{is_integerbox} primitive.
+
+The @code{meltgc_new_int} routine is implemented in
+@file{melt.c} with the following code. We give it entirely, with
+additional comments
+
+@verbatim
+melt_ptr_t
+meltgc_new_int (meltobject_ptr_t discr_p, long num)
+{
+  MELT_ENTERFRAME (2, NULL);
+#define newintv curfram__.varptr[0]
+#define discrv  curfram__.varptr[1]
+#define object_discrv ((meltobject_ptr_t)(discrv))
+#define int_newintv ((struct meltint_st*)(newintv))
+@end verbatim
+We first create a MELT frame using the @code{MELT_ENTERFRAME} macro
+which creates, initialize the frame and install it at top. The first
+argument is the number of local MELT values, the second argument is
+the current MELT closure (so is @code{NULL} for C code which is not
+the code of a routine). Instead of writing @code{curfram__.varptr[0]}
+we @code{#define} some more descriptive names for readability. The
+frame is initially filled with nil values. The value pointer arguments
+(here @code{discr_p}) of the C function are conventionally named with
+a @code{_p} suffix. Every local MELT value should be inside your
+@code{curfram__.varptr} array.
+
+
+@verbatim
+  discrv = (void *) discr_p;
+@end verbatim
+Every value passed as a C argument should be immediately copied into
+the MELT frame (i.e. as a local value) and the C argument should not
+be used directly afterwards. So never use @code{_p} suffixed arguments
+after have copied them inside the frame.
+
+@verbatim
+  if (melt_magic_discr ((melt_ptr_t) (discrv)) != OBMAG_OBJECT)
+    goto end;
+  if (object_discrv->object_magic != OBMAG_INT)
+    goto end;
+@end verbatim
+We try to be safe, so we at least test that the discriminant is an
+object. We could have tested that it is indeed an instance of
+@code{CLASS_DISCR} but that would be slower but safer. However we do
+test that the discriminant's magic is indeed
+@code{OBMAG_INT}@footnote{It is essential to ensure that every MELT
+value has the good magic numer in its discriminant. Violating that
+would crash GCC MELT.}. If either test fail, we return nil by
+@code{goto end}. We cannot code a direct @code{return} statement,
+because that would not pop the topmost MELT frame.
+
+@verbatim
+  newintv = meltgc_allocate (sizeof (struct meltint_st), 0);
+  int_newintv->discr = object_discrv;
+  int_newintv->val = num;
+@end verbatim
+We allocate space in the nursery with @code{meltgc_allocate}. This
+C function sometimes trigger MELT garbage collection, so may move any
+pointer inside any MELT frames. The first argument to
+@code{meltgc_allocate} is the @code{sizeof} of the fixed part of
+the value, and the second is the size of its trailing variable
+part. The allocated zone should be immediately filled to make a valid
+MELT value.
+
+@verbatim
+end:
+  MELT_EXITFRAME ();
+  return (melt_ptr_t) newintv;
+#undef newintv
+#undef discrv
+#undef int_newintv
+#undef object_discrv
+}
+@end verbatim
+We end by popping the current MELT frame and retuning. Popping the
+frame should always be done, so conventionally we use an @code{end:}
+label. To be good citizens for further C functions, we
+@code{#undef}-ing every C macro defined for readability.
+
+More generally, every C function which may (directly or in any deeply
+called function) trigger the MELT garbage collector should follow
+these rules:
+
+@enumerate
+
+@item avoid coding in C. 
+The whole purpose of MELT is to make coding more fun.
+
+@item make an explicit MELT frame and enter it.
+The C routine should start by making a frame usually with
+@code{MELT_ENTERFRAME} macro (which expands to a C declaration
+followed by some C statements, so should be the last ``declaration''
+like stuff in your function). For readability, you want to define C
+macros (conventionally ending with @code{v}) to access the local
+values in your frame instead of @code{curfram__.varptr[@var{index}]}.
+
+@item put every value in the MELT frame.
+This means that every value should be kept in a local inside the MELT
+frame, accessed thru @code{curfram__}. In particular, @emph{nesting
+function calls is prohibited}; never code @code{f(g(x))} if @code{g}
+may trigger a MELT garbage collection; use a local value for
+@code{g(x)} instead, and avoid declaring any MELT value as a C local.
+
+@item try to code safely.
+Unless you have specific reasons to avoid that, try to test MELT
+values before using them.
+
+@item notify on MELT updates.
+When a MELT value is updated by changing some MELT pointer inside it,
+you have to notify the garbage collector (write barrier) using the
+@code{meltgc_touch} function (taking as argument the modified MELT
+value) or the @code{meltgc_touch_dest} (also given the new MELT
+pointer inside). These functions has to be called just after writing
+the MELT pointer into the data. They can call the MELT garbage
+collector (which may change any local value in the MELT frame).
+
+@item allocate MELT data appropriately.
+Use @code{meltgc_allocate}, or preferably some existing allocating
+function (like @code{meltgc_new_*}) to allocate new MELT
+values. Never forget that such an allocation may trigger the MELT GC
+and change every local pointer in the current MELT frame
+@code{curfram__}. Most C functions which may directly or indirectly
+trigger a MELT garbage collection are prefixed with @code{meltgc}
+(but @code{melt_apply} could also trigger that).
+
+@item don't use longjmp,
+because @code{longjmp} won't pop the MELT frames.
+
+@item always exit the MELT frame
+explicitly using @code{MELT_EXITFRAME()} macro, which usually is
+the last statement of your function (so avoid @code{return}-ing
+before, hence always use a @code{goto end} instead.
+
+@item avoid using global MELT values.
+If you really need some, use the @code{MELTGOB} or @code{MELTG}
+macros. Adding additional MELT globals is tricky (edit files
+@file{melt.h} and @file{warmelt-normal.melt}). Using existing MELT
+globals is simpler, e.g. @code{MELTGOB(DISCR_LIST)} to fetch the
+predefined discriminant @code{DISCR_LIST}.
+
+@item apply MELT functions and send MELT messages
+using @code{melt_apply} and @code{meltgc_send} with their
+pecular calling conventions (constant string describing array of
+unions).
+@end enumerate
+
+@c =======================================================================

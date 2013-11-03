@@ -1,0 +1,41 @@
+;; -*- lisp -*-
+;; file  gcc/testsuite/melt/tmatch-tuple.melt
+;; test the match operation
+
+#| run in buildir/gcc
+ ln -s $GCCMELT_SOURCE/gcc/testsuite/melt/tmatch-tuple.melt 
+ gccmelt_cflags="$(grep fmelt-module-cflags meltbuild-checkruntime.args | sed 's:^ *::')" 
+ ./cc1 -fmelt-mode=runfile  -fmelt-module-path=meltbuild-stage3:meltbuild-modules \
+    -fmelt-source-path=meltbuild-stage3:meltbuild-sources \
+    -fmelt-module-makefile=$GCCMELT_SOURCE/gcc/melt-module.mk \
+    -fmelt-workdir=meltbuild-workdir \
+    -fmelt-tempdir=meltbuild-tempdir \
+    -fmelt-keep-temporary-files \
+    -fmelt-init=@warmelt.quicklybuilt \
+    -fmelt-option=match_graphic:/tmp/meltupgraph \
+    -fmelt-arg=tmatch-tuple.melt \
+     "$gccmelt_cflags" \
+    -fmelt-debug empty-file-for-melt.c
+|#
+
+(defun tmatch1_tup (x f)
+  (matchalt x
+         ( ?(tuple 
+             ?n 
+             ?_
+	     ?m)
+            (f n m))))
+
+(defun foo (u v)
+  (debug "foo u=" u " v=" v)
+  (return (list u v)))
+
+(defun test_tmatch1 ()
+  (let ( (tu (tuple 'a 'b 'c))
+	 )
+    (debug "test_tmatch1 tu=" tu)
+    (tmatch1_tup tu foo)))
+
+(test_tmatch1)
+
+;; eof tmatch-tuple.melt

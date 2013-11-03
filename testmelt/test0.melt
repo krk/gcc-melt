@@ -1,0 +1,242 @@
+;; -*- lisp -*-
+
+(defun testforeverif (p f x)
+  (forever looplab
+	   (if (p x) 
+	       (exit looplab (f x)))))
+
+
+
+(defprimitive puts (:cstring s) :void "puts(" s ")")
+
+(defprimitive primfirst (u v) :value "firstprimitive(" u "," v ")")
+
+(defprimitive primsecond (u v) :value "secondprimitive(" u "," v ")")
+
+(defun f1 
+  (g x)
+  (g x x))
+
+(defun f2 
+  (h k y) 
+  (h 
+   (f1 k y) 
+   y))
+
+(defclass my_class_root 
+ :predef CLASS_ROOT
+ :fields (root_f1 
+		  ))
+
+(defun testifapp (f x y) 
+  (if x
+      (f x y)))
+
+(defun testlambdatwo (f g x y)
+  (f 
+   (lambda (u) 
+    (g x u))
+   y))
+
+(defun testlambda  (f_cl)
+  (lambda (y_arg) 
+    (f_cl y_arg)))
+
+(defun testandsetq (f v w :long i j)
+  (if 
+      (and i j)
+      (setq v w))
+  (f v)
+  )
+
+(defun testor (v w :long i j)
+  (if 
+      (or i j) 
+      v
+    w))
+
+(defun testtwicesamelet (f u v)
+  (let ( (aa u) )
+    aa )
+  (let ( (aa v) )
+    aa 
+    f)
+)
+
+(defun testletlong (f x)
+  (let (
+        (:long two 2) )
+    (f x two)))
+
+
+(defun testletforever (x y f g)
+  (let ( (uu x) )
+    (forever loop
+	     (if (f uu) 
+		 (setq uu (g uu))
+	       (exit loop y)))))
+
+(defprimitive boxint (:long i) :value 
+  "meltgc_new_int( MELTGOB(DISCR_INTEGER), (" i "))"
+)
+
+(defprimitive is_integerbox (ib) :long
+  "(melt_magic_discr((" ib ")) == OBMAG_INT)")
+
+
+(defun testconstbox1 (xx) (if (is_integerbox xx) (boxint 2) ()))
+
+
+
+(defclass my_class_named
+  :super my_class_root
+  :fields (my_name)
+)
+
+(defclass my_class_selector
+  :super class_selector
+  :fields ( sel_extra
+))
+
+(defselector the_sel my_class_selector
+)
+
+
+
+(defun testunsafegetputnameprogn (o n f g) 
+  (let ( (oldn (unsafe_get_field :my_name 
+				 (f o))) )
+    (progn 
+      (unsafe_put_fields
+       (f o) 
+       :my_name (g n)) 
+      oldn)))
+
+(defun testput3sel (f nam xtr oselx osely oselz)
+  (unsafe_put_fields oselx 
+		     :my_name (f nam)
+		     :sel_extra (f xtr))
+  (unsafe_put_fields osely 
+		     :my_name (f nam)
+		     :sel_extra (f xtr))
+  (unsafe_put_fields oselz 
+		     :my_name (f nam)
+		     :sel_extra (f xtr)))
+
+(defun testsendsel (f x) 
+  (the_sel (f x) 
+	   (boxint 789)
+	   x
+	   246))
+
+(definstance ii my_class_root 
+  :obj_num 12751
+  :root_f1 (boxint 1001002))
+
+
+(defun testmultisend0 (g x)
+  (multicall 
+   (u v)
+   (the_sel x)
+   (g u v)
+   ))
+
+
+
+(defun testmultisend1 (g h x y)
+  (puts "begin testmultisend")
+  (multicall 
+   (u v)
+   (the_sel 
+    (g y y) 
+    ii 
+    1357)
+   (puts "middle testmultisend")
+   (h u 
+      (g v x))
+   ))
+
+
+
+(defun testmultisend2 (f g1 g2 h x)
+  (multicall 
+   (u v)
+   (the_sel
+    (f x)
+    x)
+   (g1 u v)
+   (g2 u v)
+   (h u v)
+   )
+)
+
+
+;; it happenned (at least in rev135773 of Melt branch) that the
+;; following function was incorrectly compiled because the
+;; unsafe_put_fields was generated at the wrong place, after the
+;; multicall!
+
+(defun testputfieldmultisend (ob f x y z)
+  (let ( 
+	(u (primfirst x y))
+	)
+    (unsafe_put_fields ob :sel_extra u)
+    (multicall 
+     (r1 r2)
+     (f y z)
+     (primsecond r1 r2)
+    )
+  )
+) 
+
+
+(defprimitive gti (:long a b) :long 
+  "((" a ")>(" b "))")
+
+(defun foo (x :long n) 
+  (if
+      (gti n 0) 
+      x 
+    (boxint n)))
+
+(defun bar (y)
+  (if y
+      (foo y 123)
+    (boxint 456)))
+
+(defun testforever (z)
+  (forever loop
+	   (exit loop (bar z))))
+ 
+(defun testmulticall (f g x)
+  (multicall 
+   (r1 r2) 
+   (g x)
+   (f r1 r2)))
+
+
+
+(defun testtwolets (f g x y)
+  (let ( (u 
+	  (f x)) )
+    (let ( (v 
+	    (f y)) )
+      (g u v))
+    (let ( (v 
+	    (f u)) )
+      (g v u))))
+
+(defun testcpp (x)
+ (cppif "MYCPPCOND && OTHERCOND" x ()))
+
+(if foo 
+    (puts "has foo"))
+
+(if boxint 
+    (puts "has boxint"))
+
+(puts "end test0")
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+#| ; SKIPPING
+; SKIPPED  |#

@@ -1,0 +1,2965 @@
+; -*- Lisp -*-
+;; file warmelt-hooks.melt
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(comment "***
+    Copyright 2012 - 2013 Free Software Foundation, Inc.
+    Contributed by Basile Starynkevitch <basile@starynkevitch.net>
+
+    This file is part of GCC.
+
+    GCC is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 3, or (at your option)
+    any later version.
+
+    GCC is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with GCC; see the file COPYING3.  If not see
+    <http://www.gnu.org/licenses/>.
+***")
+
+;; the copyright notice above apply both to warmelt-hooks.melt and 
+;; to the generated files  warmelt-hooks*.c
+
+
+;;;====================================================================
+;;;******************* low level debug at routine *********************
+;;;see the melt_low_debug_value macro in melt-runtime.h
+(defhook hook_low_debug_value_at (:value val 
+				  :cstring filename :long lineno
+				  :cstring msg :long count) () :void
+  :predef HOOK_LOW_DEBUG_VALUE_AT
+  :doc #{$HOOK_LOW_DEBUG_VALUE_AT is an internal hook for the
+  melt_low_debug_value macro in @file{melt-runtime.h}. Output on the
+  dump file or else the standard errror.}#
+  (melt_debug_fun () count filename lineno msg val)
+)
+
+(defhook hook_low_stderr_value_at (:value val 
+				  :cstring filename :long lineno
+				  :cstring msg :long count) () :void
+  :predef HOOK_LOW_STDERR_VALUE_AT
+  :doc #{$HOOK_LOW_STDERR_VALUE_AT is an internal hook for the
+  melt_low_stderr_value macro in @file{melt-runtime.h}. 
+  Output always on standard errror.}#
+  (block_signals 
+   () ()
+   (let ( (:long dbgcounter 0)
+	  (stderrf (get_field :sysdata_stderr initial_system_data)) 
+	  (occmap (make_mapobject discr_map_objects 50))
+	  (boxedmaxdepth (constant_box (+i 2 (debug_depth)))) ;;;; @@@ DEBUGDEPTH
+	  (dbgi (instance class_debug_information
+			  :dbgi_out stderrf
+			  :dbgi_occmap occmap
+			  :dbgi_maxdepth boxedmaxdepth))
+	  (:long framdepth (the_framedepth)) 
+	  )
+     (code_chunk getdbgcounter 
+		 #{/*hook_low_stderr_value_at $GETDBGCOUNTER*/ $DBGCOUNTER = melt_dbgcounter ;
+		 }#)
+     (add2out_strconst stderrf "!!!!****####")
+     (add2out_longdec stderrf dbgcounter)
+     (add2out_strconst stderrf "#^")
+     (add2out_longdec stderrf (-i framdepth 1))
+     (add2out_strconst stderrf ":")
+     (when filename
+       (add2out_strconst stderrf filename)
+       (add2out_strconst stderrf ":")
+       (add2out_longdec stderrf lineno)
+       (add2out_strconst stderrf ":")
+       )
+     (add2out_strconst stderrf msg)
+     (when (>i count 0) 
+       (add2out_strconst stderrf " !")
+       (add2out_longdec stderrf count)
+       (add2out_strconst stderrf ": ")
+       )
+     (if val 
+	 (dbg_out val dbgi 0)
+       (add2out_strconst stderrf "() ;;;NIL!!!")
+       )
+     (add2out_indentnl stderrf 0)
+     ))
+)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Nota Bene: environment management hooks are so crucial that they
+;;; have to be in warmelt-first.melt,
+;;; i.e. hook_fresh_environment_reference_maker, hook_value_importer,
+;;; hook_value_exporter, hook_macro_exporter, hook_patmacro_exporter...
+
+
+;;;====================================================================
+;;;******************* OVERRIDE_GATE plugin event *********************
+(definstance override_gate_delayed_queue class_delayed_queue
+  :named_name '"override_gate_delayed_queue"
+  :delqu_first (make_list discr_list)
+  :delqu_last (make_list discr_list)
+)
+
+(defhook hook_override_gate (:long beforegate) (:long aftergate) :void
+  :predef HOOK_OVERRIDE_GATE
+  :doc #{The internal $HOOK_OVERRIDE_GATE handles
+  @t{PLUGIN_OVERRIDE_GATE} events. See $REGISTER_OVERRIDE_GATE_FIRST
+  etc...}#
+  (debug "hook_override_gate beforegate=" beforegate)
+  (let ( 
+	(gateflag (if beforegate :true ()))
+	(passname ())
+	(:long passnum 0)
+	(memref (reference ()))
+	(revlastlist (make_list discr_list))
+	(qufirst (get_field :delqu_first override_gate_delayed_queue))
+	(qulast (get_field :delqu_last override_gate_delayed_queue))
+	)
+    ;; retrieve the passname and pass number
+    (code_chunk 
+     getpassname_chk 
+     #{ /* hook_override_gate $GETPASSNAME_CHK */
+     gcc_assert (current_pass != NULL);
+     $PASSNAME =  meltgc_new_stringdup
+	((meltobject_ptr_t) MELT_PREDEF(DISCR_STRING), current_pass->name);
+     $PASSNUM = current_pass->static_pass_number;
+     }#)
+    ;; call the first closures in natural order
+    (debug "hook_override_gate memref=" memref 
+	   "\n gateflag=" gateflag
+	   "\n override_gate_delayed_queue=" override_gate_delayed_queue
+	   "\n passname=" passname " passnum=" passnum)
+    ;; apply the first closures in order
+    (foreach_pair_component_in_list
+     (qufirst)
+     (curpair curclo)
+     (debug "hook_override_gate first curclo=" curclo " memref=" memref)
+     (if (is_closure curclo)
+	 (let ( (clores (curclo gateflag memref passname passnum))
+		)
+	   (debug "hook_override_gate first clores=" clores)
+	   (setq gateflag clores)
+	 )))
+    ;; reverse the last closures list
+    (foreach_pair_component_in_list
+     (qulast)
+     (curlpair curlclo)
+     (if (is_closure curlclo)
+	 (list_append revlastlist curlclo)))
+    ;; apply the last closures in reverse order
+    (foreach_pair_component_in_list
+     (revlastlist)
+     (curlpair curlclo)
+     (debug "hook_override_gate last curlclo=" curlclo " memref=" memref)
+     (assert_msg "check curlclo" (is_closure curlclo) curlclo)
+     (let ( (clores (curlclo gateflag memref passname passnum))
+	    )
+       (debug "hook_override_gate last clores=" clores)
+       (setq gateflag clores)))
+    ;;
+    (debug "hook_override_gate final gateflag=" gateflag
+	   "\n passname=" passname " passnum=" passnum)
+    (if gateflag
+	(setq aftergate 1)
+      (setq aftergate 0))
+  )
+)
+
+(cheader 
+ #{
+   static void 
+   melt_override_gate_callback (void* gccdata, 
+				void* userdata ATTRIBUTE_UNUSED)
+   {
+     bool *pgatestatus = (bool*) gccdata;
+     bool gatsta = false;
+     long oldgatstalng = 0, newgatstalng = 0;
+     gcc_assert (pgatestatus != NULL);
+     gatsta = *pgatestatus;
+     oldgatstalng = newgatstalng = (long)gatsta;
+     melthookproc_HOOK_OVERRIDE_GATE (oldgatstalng, &newgatstalng);
+     gatsta = (newgatstalng != 0L);
+     *pgatestatus = gatsta;
+   } /* end of  melt_override_gate_callback */
+ }#)
+
+
+;; internal flag set when PLUGIN_OVERRIDE_GATE registered
+
+(cheader #{/* flag for PLUGIN_OVERRIDE_GATE */
+MELT_EXTERN bool MELT_MODULE_VISIBILITY  melthk_override_gate_registered_flag;
+}#)
+
+(cimplement #{/* flag for PLUGIN_OVERRIDE_GATE */
+bool  melthk_override_gate_registered_flag;
+}#)
+
+;; internal function to enable the plugin hook
+(defun enable_override_gate ()
+    (code_chunk 
+     regpluginoverride_gate_chk
+     #{ /* enable_override_gate $REGPLUGINOVERRIDE_GATE_CHK */
+     if (!melthk_override_gate_registered_flag) 
+       {
+         melthk_override_gate_registered_flag = true;
+         register_callback (melt_plugin_name, PLUGIN_OVERRIDE_GATE,
+			    melt_override_gate_callback,
+			    NULL);
+       }
+     }#)
+)
+
+;; internal function to disable the plugin hook
+(defun maybe_disable_override_gate ()
+  (when (and 
+	     (null (list_first (get_field :delqu_first override_gate_delayed_queue)))
+	     (null (list_first (get_field :delqu_last override_gate_delayed_queue))))
+    (code_chunk
+     unregpluginoverride_gate_chk
+     #{ /* disable_override_gate $UNREGPLUGINOVERRIDE_GATE_CHK */
+     if (melthk_override_gate_registered_flag)
+       {
+         melthk_override_gate_registered_flag = false;
+         unregister_callback (melt_plugin_name, PLUGIN_OVERRIDE_GATE);
+       }
+     }#)
+))
+
+;; public functions to register
+(defun register_override_gate_first (clo)
+  :doc #{Register a function $CLO for @code{PLUGIN_OVERRIDE_GATE} at first place. 
+See also $UNREGISTER_OVERRIDE_GATE_FIRST, $REGISTER_OVERRIDE_GATE_LAST, etc..}#
+  (debug "register_override_gate_first clo=" clo)
+  (when (is_closure clo)
+    (list_append (get_field :delqu_first override_gate_delayed_queue) clo)
+    (enable_override_gate)))
+
+(defun register_override_gate_last (clo)
+  :doc #{Register a function $CLO for @code{PLUGIN_OVERRIDE_GATE} at last place. 
+See also $UNREGISTER_OVERRIDE_GATE_LAST, $REGISTER_OVERRIDE_GATE_FIRST, etc...}#
+  (debug "register_override_gate_last clo=" clo)
+  (when (is_closure clo)
+    (list_append (get_field :delqu_last override_gate_delayed_queue) clo)
+    (enable_override_gate)))
+
+(defun unregister_override_gate_first (clo)
+  :doc #{Unregister a function $CLO previously registered with
+  $REGISTER_OVERRIDE_GATE_FIRST for @code{PLUGIN_OVERRIDE_GATE},
+  return the boxed count of removed closures or null on failure.}#
+  (debug "unregister_override_gate_first clo=" clo)
+  (let ( (oldlis (get_field :delqu_first override_gate_delayed_queue))
+	 (newlis (make_list discr_list))
+	 (:long count 0)
+	 )
+    (foreach_pair_component_in_list
+     (oldlis)
+     (curpair curclo)
+     (if (== curclo clo) 
+	 (setq count (+i count 1))
+       (list_append newlis curclo)))
+    (when count
+      (put_fields override_gate_delayed_queue :delqu_first newlis)
+      (maybe_disable_override_gate)
+      (debug "unregister_override_gate_first count=" count)
+      (return (constant_box count)))
+    (debug "unregister_override_gate_first fail")
+    (return ())))
+
+(defun unregister_override_gate_last (clo)
+  :doc #{Unregister a function $CLO previously registered with
+  $REGISTER_OVERRIDE_GATE_LAST for @code{PLUGIN_OVERRIDE_GATE}, 
+  return the boxed count of removed closures or null on failure.}#
+  (debug "unregister_override_gate_last clo=" clo)
+  (let ( (oldlis (get_field :delqu_last override_gate_delayed_queue))
+	 (newlis (make_list discr_list))
+	 (:long count 0)
+	 )
+    (foreach_pair_component_in_list
+     (oldlis)
+     (curpair curclo)
+     (if (== curclo clo) 
+	 (setq count (+i count 1))
+       (list_append newlis curclo)))
+    (when count
+      (put_fields override_gate_delayed_queue :delqu_last newlis)
+      (maybe_disable_override_gate)
+      (debug "unregister_override_gate_last count=" count)
+      (return (constant_box count)))
+    (debug "unregister_override_gate_last fail")
+    (return ())))
+
+;;;====================================================================
+;;;******************* START_UNIT plugin event *********************
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(cheader #{/* flag for PLUGIN_START_UNIT */
+MELT_EXTERN bool MELT_MODULE_VISIBILITY  melthk_start_unit_registered_flag;
+}#)
+
+(cimplement #{/* flag for for PLUGIN_START_UNIT */
+bool  melthk_start_unit_registered_flag;
+}#)
+
+;;;;;; private queue for start of compilation unit
+(definstance start_unit_delayed_queue class_delayed_queue
+  :named_name '"start_unit_delayed_queue"
+  :delqu_first (make_list discr_list)
+  :delqu_last (make_list discr_list)
+  )
+
+;; this internal hook needs to be predefined to remain alive for the
+;; MELT & Ggc garbage collectors...
+(defhook hook_start_unit () () :void
+  :predef HOOK_START_UNIT
+  (let ( (firstlist (unsafe_get_field :delqu_first start_unit_delayed_queue))
+	 (lastlist (unsafe_get_field :delqu_last start_unit_delayed_queue))
+	 (revlastlist (make_list discr_list))
+	 (rescont (instance class_reference))
+	 )
+;;; call the first routines in natural order
+    (list_every 
+     firstlist
+     (lambda (firstproc)
+       (let ( (prevres (unsafe_get_field :referenced_value rescont)) 
+	      (nextres (firstproc prevres start_unit_delayed_queue))
+	      )
+	 (unsafe_put_fields rescont :referenced_value nextres)
+	 )))
+;;; reverse the last list
+    (list_every 
+     lastlist 
+     (lambda (lastproc)
+       (if (is_closure lastproc) (list_prepend revlastlist lastproc))))
+;;; call the last routines in reverse order
+    (list_every
+     revlastlist
+     (lambda (lastproc)
+       (let ( (prevres (unsafe_get_field :referenced_value rescont)) 
+	      (nextres (lastproc prevres start_unit_delayed_queue))
+	      )
+	 (unsafe_put_fields rescont :referenced_value nextres)
+	 )))
+    ))
+
+(cheader #{ 
+ void MELT_MODULE_VISIBILITY 
+    melt_startunithook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+				 void* user_data ATTRIBUTE_UNUSED);
+ }#)
+
+(cimplement #{
+ void 
+ melt_startunithook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+			      void* user_data ATTRIBUTE_UNUSED)
+ {
+    melthookproc_HOOK_START_UNIT ();
+ }
+ }#)
+
+;; internal function to enable the plugin hook
+(defun enable_start_unit ()
+  (code_chunk 
+   enabstartunit_chk
+   #{
+   if (!melthk_start_unit_registered_flag) 
+     {
+       melthk_start_unit_registered_flag = true;
+       register_callback (melt_plugin_name, PLUGIN_START_UNIT,
+			  melt_startunithook_callback,
+			  NULL);
+     }
+   }#)
+  )
+
+
+(defun at_start_unit_first (fun)
+  :doc #{Use $AT_START_UNIT_FIRST to register a function to be run at start of translation unit, in first place.}#
+  (let ( (firstlist (unsafe_get_field :delqu_first start_unit_delayed_queue))
+	 )
+    (when (is_closure fun) 
+      (enable_start_unit)
+      (list_append firstlist fun)))
+  )  
+
+(defun at_start_unit_last (fun)
+  :doc #{Use $AT_START_UNIT_LAST to register a function to be run at start of translation unit, in first place.}#
+  (let ( (lastlist (unsafe_get_field :delqu_last start_unit_delayed_queue))
+	 )
+    (when (is_closure fun) 
+      (enable_start_unit)
+      (list_append lastlist fun)))
+  )
+
+  
+;;;====================================================================
+;;;******************* FINISH_UNIT plugin event *********************
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;;;; the private queue for compilation unit finish
+(definstance finish_unit_delayed_queue class_delayed_queue
+  :named_name '"finish_unit_delayed_queue"
+  :delqu_first (make_list discr_list)
+  :delqu_last (make_list discr_list)
+  )
+
+(cheader #{/* flag for PLUGIN_FINISH_UNIT */
+MELT_EXTERN bool MELT_MODULE_VISIBILITY  melthk_finish_unit_registered_flag;
+}#)
+
+(cimplement #{/* flag for PLUGIN_FINISH_UNIT */
+bool MELT_MODULE_VISIBILITY  melthk_finish_unit_registered_flag;
+}#)
+
+(defhook hook_finish_unit () () :void
+  :predef HOOK_FINISH_UNIT
+  (let ( (firstlist (unsafe_get_field :delqu_first finish_unit_delayed_queue))
+	 (lastlist (unsafe_get_field :delqu_last finish_unit_delayed_queue))
+	 (revlastlist (make_list discr_list))
+	 (rescont (instance class_reference))
+	 )
+;;; call the first routines in natural order
+    (list_every 
+     firstlist
+     (lambda (firstproc)
+       (let ( (prevres (unsafe_get_field :referenced_value rescont)) 
+	      (nextres (firstproc prevres finish_unit_delayed_queue))
+	      )
+	 (unsafe_put_fields rescont :referenced_value nextres)
+	 )))
+;;; reverse the last list
+    (list_every 
+     lastlist 
+     (lambda (lastproc)
+       (if (is_closure lastproc) (list_prepend revlastlist lastproc))))
+;;; call the last routines in reverse order
+    (list_every
+     revlastlist
+     (lambda (lastproc)
+       (let ( (prevres (unsafe_get_field :referenced_value rescont)) 
+	      (nextres (lastproc prevres finish_unit_delayed_queue))
+	      )
+	 (unsafe_put_fields rescont :referenced_value nextres)
+	 )))
+;;; force a minor GC to ensure nothing stays in the young region
+    (code_chunk finishunitminorgc_chk 
+		#{/*hook_finish_unit $FINISHUNITMINORGC_CHK*/ melt_garbcoll (0, MELT_ONLY_MINOR)}#)
+    ))
+
+
+(cheader 
+ #{ 
+ void MELT_MODULE_VISIBILITY 
+    melt_finishunithook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+				 void* user_data ATTRIBUTE_UNUSED);
+ }#)
+
+(cimplement
+ #{
+ void 
+ melt_finishunithook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+			      void* user_data ATTRIBUTE_UNUSED)
+ {
+    melthookproc_HOOK_FINISH_UNIT ();
+ }
+ }#)
+(defun enable_finish_unit ()
+  (code_chunk 
+   enfinishunit_chk
+   #{ /* enable_finish_unit $ENFINISHUNIT_CHK */
+   if (!melthk_finish_unit_registered_flag) 
+     {
+        melthk_finish_unit_registered_flag = true;
+       register_callback (melt_plugin_name, PLUGIN_FINISH_UNIT,
+			  melt_finishunithook_callback,
+			  NULL);
+     }
+   }#)
+)
+
+(defun at_finish_unit_first (fun)
+  :doc #{Use $AT_FINISH_UNIT_FIRST to register a function to be run at
+end of compilation unit in first place}#
+  (let ( (firstlist (unsafe_get_field :delqu_first finish_unit_delayed_queue))
+	 )
+    (when (is_closure fun) 
+      (enable_finish_unit)
+      (list_append firstlist fun)))
+  )  
+
+(defun at_finish_unit_last (fun)
+  :doc #{Use $AT_FINISH_UNIT_LAST to register a function to be run at
+end of compilation unit in last place}#
+  (let ( (lastlist (unsafe_get_field :delqu_last finish_unit_delayed_queue))
+	 )
+    (when (is_closure fun) 
+      (enable_finish_unit)
+      (list_append lastlist fun)))
+  )
+
+
+
+
+  
+;;;====================================================================
+;;;****************** ALL_PASSES_START plugin event *******************
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; handling PLUGIN_ALL_PASSES_START
+;; private all_passes_start handling queue
+(definstance all_passes_start_delayed_queue class_delayed_queue
+  :named_name '"all_passes_start_delayed_queue"
+  :delqu_first ()
+  :delqu_last ()
+  )
+
+(cheader #{/* flag for PLUGIN_ALL_PASSES_START declare */
+MELT_EXTERN bool MELT_MODULE_VISIBILITY  melthk_all_passes_start_registered_flag;
+}#)
+(cimplement  #{/* flag for PLUGIN_ALL_PASSES_START define */
+ bool melthk_all_passes_start_registered_flag;
+}#)
+
+;; internal hook for PLUGIN_ALL_PASSES_START 
+(defhook hook_all_passes_start () () :void
+  :predef HOOK_ALL_PASSES_START
+  (let ( (firstlist (get_field :delqu_first all_passes_start_delayed_queue))
+	 (lastlist (get_field :delqu_last all_passes_start_delayed_queue))
+	 (revlastlist (make_list discr_list))
+	 (res ())
+	 )
+;;; call the first routines in natural order
+    (foreach_pair_component_in_list
+     (firstlist)
+     (firstpair firstproc)
+     (setq res (firstproc res))
+     )
+;;; reverse the last list
+    (foreach_pair_component_in_list
+     (lastlist)
+     (lastpair lastproc)
+     (if (is_closure lastproc) (list_prepend revlastlist lastproc)))
+;;; call the last routines in reverse order
+    (if lastlist 
+	(foreach_pair_component_in_list
+	 (revlastlist)
+	 (revlastpair revlastproc)
+	 (setq res (revlastproc res))
+    ))))
+
+(cheader #{ 
+ void MELT_MODULE_VISIBILITY 
+    melt_all_passes_start_hook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+				 void* user_data ATTRIBUTE_UNUSED);
+ }#)
+
+(cimplement #{
+ void 
+ melt_all_passes_start_hook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+			      void* user_data ATTRIBUTE_UNUSED)
+ {
+    melthookproc_HOOK_ALL_PASSES_START ();
+ }
+ }#)
+
+(defun enable_all_passes_start ()
+  (code_chunk 
+   enallpassesstart_chk
+   #{ /* enable_all_passes_start $ENALLPASSESSTART_CHK */
+     if (!melthk_all_passes_start_registered_flag) {
+       melthk_all_passes_start_registered_flag = true;
+       register_callback (melt_plugin_name, PLUGIN_ALL_PASSES_START,
+			  melt_all_passes_start_hook_callback,
+			  NULL);
+     }
+   }#
+  ))
+
+(defun register_all_passes_start_first (fun)
+  :doc #{Use $REGISTER_ALL_PASSES_START_FIRST to register a function $FUN to
+  be run at PLUGIN_ALL_PASSES_START, in first place.  $FUN must be a closure
+  which takes no arguments and whose result is ignored.}#
+  (if (is_closure fun)
+      (let ( (firstlist (get_field :delqu_first all_passes_start_delayed_queue))
+	    )
+	(enable_all_passes_start)
+	(if (null firstlist)
+	    (progn
+	      (setq firstlist (make_list discr_list))
+	      (put_fields
+	        all_passes_start_delayed_queue
+	        :delqu_first firstlist
+	        :delqu_last (make_list discr_list))
+	      ))
+	(list_append firstlist fun)
+	)
+    ;; fun not a closure
+      (errormsg_plain
+        "Bad function (non closure) passed to register_all_passes_start_hook_first")
+    ))
+
+(defun register_all_passes_start_last (fun)
+  :doc #{Use $REGISTER_ALL_PASSES_START_LAST to register a function $FUN to
+  be run at PLUGIN_ALL_PASSES_START, in last place.  $FUN must be a closure
+  which takes no argument and whose result is ignored.}#
+  (if (is_closure fun)
+      (let ( (lastlist (get_field :delqu_last all_passes_start_delayed_queue))
+	    )
+	(enable_all_passes_start)
+	(if (null lastlist)
+	    (progn
+	      (setq lastlist (make_list discr_list))
+	      (put_fields
+	        all_passes_start_delayed_queue
+	        :delqu_first (make_list discr_list)
+	        :delqu_last lastlist)
+	      ))
+	(list_append lastlist fun)
+	)
+    ;; fun not a closure
+      (errormsg_plain
+        "Bad function (non closure) passed to register_all_passes_start_hook_last")
+    ))
+
+
+;;;====================================================================
+;;;****************** ALL_PASSES_END plugin event *******************
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+(cheader #{/* flag for PLUGIN_ALL_PASSES_END declare */
+MELT_EXTERN bool MELT_MODULE_VISIBILITY  melthk_all_passes_end_registered_flag;
+}#)
+(cimplement #{/* flag for PLUGIN_ALL_PASSES_END define */
+bool  melthk_all_passes_end_registered_flag;
+}#)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; handling PLUGIN_ALL_PASSES_END
+;; private all_passes_end handling queue
+(definstance all_passes_end_delayed_queue class_delayed_queue
+  :named_name '"all_passes_end_delayed_queue"
+  :delqu_first ()
+  :delqu_last ()
+  )
+
+;; internal private hook for PLUGIN_ALL_PASSES_END 
+(defhook hook_all_passes_end () () :void
+  :predef HOOK_ALL_PASSES_END
+  (let ( (firstlist (get_field :delqu_first all_passes_end_delayed_queue))
+	 (lastlist (get_field :delqu_last all_passes_end_delayed_queue))
+	 (revlastlist (make_list discr_list))
+	 (res ())
+	 )
+;;; call the first routines in natural order
+    (foreach_pair_component_in_list
+     (firstlist)
+     (firstpair firstproc)
+     (setq res (firstproc res))
+     )
+;;; reverse the last list
+    (foreach_pair_component_in_list
+     (lastlist)
+     (lastpair lastproc)
+     (if (is_closure lastproc) (list_prepend revlastlist lastproc)))
+;;; call the last routines in reverse order
+    (foreach_pair_component_in_list
+     (revlastlist)
+     (revlastpair revlastproc)
+     (setq res (revlastproc res))
+    )))
+
+(cheader #{ 
+ void MELT_MODULE_VISIBILITY 
+    melt_all_passes_end_hook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+				 void* user_data ATTRIBUTE_UNUSED);
+ }#)
+
+(cimplement #{
+ void 
+ melt_all_passes_end_hook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+			      void* user_data ATTRIBUTE_UNUSED)
+ {
+    melthookproc_HOOK_ALL_PASSES_END ();
+ }
+ }#)
+
+(defun enable_all_passes_end ()
+  (code_chunk 
+   enallpassesend_chk
+   #{ /* enable_all_passes_end $ENALLPASSESEND_CHK */
+     if (!melthk_all_passes_end_registered_flag) {
+       melthk_all_passes_end_registered_flag = true; 
+       register_callback (melt_plugin_name, PLUGIN_ALL_PASSES_END,
+			  melt_all_passes_end_hook_callback,
+                          NULL);
+     } 
+   }#
+  ))
+
+(defun register_all_passes_end_first (fun)
+  :doc #{Use $REGISTER_ALL_PASSES_END_FIRST to register a function $FUN to
+  be run at PLUGIN_ALL_PASSES_END, in first place.  $FUN must be a closure
+  which takes no argument and whose result is ignored.}#
+  (if (is_closure fun)
+      (let ( (firstlist (get_field :delqu_first all_passes_end_delayed_queue))
+	    )
+	(enable_all_passes_end)
+	(if (null firstlist)
+	    (progn
+	      (setq firstlist (make_list discr_list))
+	      (put_fields
+	        all_passes_end_delayed_queue
+	        :delqu_first firstlist
+	        :delqu_last (make_list discr_list))
+	      ))
+	(list_append firstlist fun)
+	)
+    ;; fun not a closure
+      (errormsg_plain
+        "Bad function (non closure) passed to register_all_passes_end_first")
+    ))
+
+(defun register_all_passes_end_last (fun)
+  :doc #{Use $REGISTER_ALL_PASSES_END_LAST to register a function $FUN to
+  be run at PLUGIN_ALL_PASSES_END, in last place.  $FUN must be a closure
+  which takes no arguments and whose result is ignored.}#
+  (if (is_closure fun)
+      (let ( (lastlist (get_field :delqu_last all_passes_end_delayed_queue))
+	    )
+	(enable_all_passes_end)
+	(if (null lastlist)
+	    (progn
+	      (setq lastlist (make_list discr_list))
+	      (put_fields
+	        all_passes_end_delayed_queue
+	        :delqu_first (make_list discr_list)
+	        :delqu_last lastlist)
+	      ))
+	(list_append lastlist fun)
+	)
+    ;; fun not a closure
+      (errormsg_plain
+        "Bad function (non closure) passed to register_all_passes_end_last")
+    ))
+
+
+;;;====================================================================
+;;;****************** ALL_IPA_PASSES_START plugin event *******************
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; handling PLUGIN_ALL_IPA_PASSES_START
+;; private all_ipa_passes_start handling queue
+(definstance all_ipa_passes_start_delayed_queue class_delayed_queue
+  :named_name '"all_ipa_passes_start_delayed_queue"
+  :delqu_first ()
+  :delqu_last ()
+  )
+
+(cheader #{/* flag for PLUGIN_ALL_IPA_PASSES_START declare */
+MELT_EXTERN bool MELT_MODULE_VISIBILITY  melthk_all_ipa_passes_start_registered_flag;
+}#)
+(cimplement  #{/* flag for PLUGIN_ALL_IPA_PASSES_START define */
+ bool melthk_all_ipa_passes_start_registered_flag;
+}#)
+
+;; internal hook for PLUGIN_ALL_IPA_PASSES_START 
+(defhook hook_all_ipa_passes_start () () :void
+  :predef HOOK_ALL_IPA_PASSES_START
+  (let ( (firstlist (get_field :delqu_first all_ipa_passes_start_delayed_queue))
+	 (lastlist (get_field :delqu_last all_ipa_passes_start_delayed_queue))
+	 (revlastlist (make_list discr_list))
+	 (res ())
+	 )
+;;; call the first routines in natural order
+    (foreach_pair_component_in_list
+     (firstlist)
+     (firstpair firstproc)
+     (setq res (firstproc res))
+     )
+;;; reverse the last list
+    (foreach_pair_component_in_list
+     (lastlist)
+     (lastpair lastproc)
+     (if (is_closure lastproc) (list_prepend revlastlist lastproc)))
+;;; call the last routines in reverse order
+    (if lastlist 
+	(foreach_pair_component_in_list
+	 (revlastlist)
+	 (revlastpair revlastproc)
+	 (setq res (revlastproc res))
+    ))))
+
+(cheader #{ 
+ void MELT_MODULE_VISIBILITY 
+    melt_all_ipa_passes_start_hook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+				 void* user_data ATTRIBUTE_UNUSED);
+ }#)
+
+(cimplement #{
+ void 
+ melt_all_ipa_passes_start_hook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+			      void* user_data ATTRIBUTE_UNUSED)
+ {
+   melthookproc_HOOK_ALL_IPA_PASSES_START ();
+ }
+ }#)
+
+(defun enable_all_ipa_passes_start ()
+  (code_chunk 
+   enallpassesstart_chk
+   #{ /* enable_all_ipa_passes_start $ENALLPASSESSTART_CHK */
+     if (!melthk_all_ipa_passes_start_registered_flag) {
+       melthk_all_ipa_passes_start_registered_flag = true;
+       register_callback (melt_plugin_name, PLUGIN_ALL_IPA_PASSES_START,
+			  melt_all_ipa_passes_start_hook_callback,
+			  NULL);
+     }
+   }#
+  ))
+
+(defun register_all_ipa_passes_start_first (fun)
+  :doc #{Use $REGISTER_ALL_IPA_PASSES_START_FIRST to register a function $FUN to
+  be run at PLUGIN_ALL_IPA_PASSES_START, in first place.  $FUN must be a closure
+  which takes no arguments and whose result is ignored.}#
+  (if (is_closure fun)
+      (let ( (firstlist (get_field :delqu_first all_ipa_passes_start_delayed_queue))
+	    )
+	(enable_all_ipa_passes_start)
+	(if (null firstlist)
+	    (progn
+	      (setq firstlist (make_list discr_list))
+	      (put_fields
+	        all_ipa_passes_start_delayed_queue
+	        :delqu_first firstlist
+	        :delqu_last (make_list discr_list))
+	      ))
+	(list_append firstlist fun)
+	)
+    ;; fun not a closure
+      (errormsg_plain
+        "Bad function (non closure) passed to register_all_ipa_passes_start_hook_first")
+    ))
+
+(defun register_all_ipa_passes_start_last (fun)
+  :doc #{Use $REGISTER_ALL_IPA_PASSES_START_LAST to register a function $FUN to
+  be run at PLUGIN_ALL_IPA_PASSES_START, in last place.  $FUN must be a closure
+  which takes no argument and whose result is ignored.}#
+  (if (is_closure fun)
+      (let ( (lastlist (get_field :delqu_last all_ipa_passes_start_delayed_queue))
+	    )
+	(enable_all_ipa_passes_start)
+	(if (null lastlist)
+	    (progn
+	      (setq lastlist (make_list discr_list))
+	      (put_fields
+	        all_ipa_passes_start_delayed_queue
+	        :delqu_first (make_list discr_list)
+	        :delqu_last lastlist)
+	      ))
+	(list_append lastlist fun)
+	)
+    ;; fun not a closure
+      (errormsg_plain
+        "Bad function (non closure) passed to register_all_ipa_passes_start_hook_last")
+    ))
+
+
+;;;====================================================================
+;;;****************** ALL_IPA_PASSES_END plugin event *******************
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+(cheader #{/* flag for PLUGIN_ALL_IPA_PASSES_END declare */
+MELT_EXTERN bool MELT_MODULE_VISIBILITY  melthk_all_ipa_passes_end_registered_flag;
+}#)
+(cimplement #{/* flag for PLUGIN_ALL_IPA_PASSES_END define */
+bool  melthk_all_ipa_passes_end_registered_flag;
+}#)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; handling PLUGIN_ALL_IPA_PASSES_END
+;; private all_ipa_passes_end handling queue
+(definstance all_ipa_passes_end_delayed_queue class_delayed_queue
+  :named_name '"all_ipa_passes_end_delayed_queue"
+  :delqu_first ()
+  :delqu_last ()
+  )
+
+;; internal private hook for PLUGIN_ALL_IPA_PASSES_END 
+(defhook hook_all_ipa_passes_end () () :void
+  :predef HOOK_ALL_IPA_PASSES_END
+  (let ( (firstlist (get_field :delqu_first all_ipa_passes_end_delayed_queue))
+	 (lastlist (get_field :delqu_last all_ipa_passes_end_delayed_queue))
+	 (revlastlist (make_list discr_list))
+	 (res ())
+	 )
+;;; call the first routines in natural order
+    (foreach_pair_component_in_list
+     (firstlist)
+     (firstpair firstproc)
+     (setq res (firstproc res))
+     )
+;;; reverse the last list
+    (foreach_pair_component_in_list
+     (lastlist)
+     (lastpair lastproc)
+     (if (is_closure lastproc) (list_prepend revlastlist lastproc)))
+;;; call the last routines in reverse order
+    (foreach_pair_component_in_list
+     (revlastlist)
+     (revlastpair revlastproc)
+     (setq res (revlastproc res))
+    )))
+
+(cheader #{ 
+ void MELT_MODULE_VISIBILITY 
+    melt_all_ipa_passes_end_hook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+				 void* user_data ATTRIBUTE_UNUSED);
+ }#)
+
+(cimplement #{
+ void 
+ melt_all_ipa_passes_end_hook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+			      void* user_data ATTRIBUTE_UNUSED)
+ {
+    melthookproc_HOOK_ALL_IPA_PASSES_END ();
+ }
+ }#)
+
+(defun enable_all_ipa_passes_end ()
+  (code_chunk 
+   enallpassesend_chk
+   #{ /* enable_all_ipa_passes_end $ENALLPASSESEND_CHK */
+     if (!melthk_all_ipa_passes_end_registered_flag) {
+       melthk_all_ipa_passes_end_registered_flag = true; 
+       register_callback (melt_plugin_name, PLUGIN_ALL_IPA_PASSES_END,
+			  melt_all_ipa_passes_end_hook_callback,
+                          NULL);
+     } 
+   }#
+  ))
+
+(defun register_all_ipa_passes_end_first (fun)
+  :doc #{Use $REGISTER_ALL_IPA_PASSES_END_FIRST to register a function $FUN to
+  be run at PLUGIN_ALL_IPA_PASSES_END, in first place.  $FUN must be a closure
+  which takes no argument and whose result is ignored.}#
+  (if (is_closure fun)
+      (let ( (firstlist (get_field :delqu_first all_ipa_passes_end_delayed_queue))
+	    )
+	(enable_all_ipa_passes_end)
+	(if (null firstlist)
+	    (progn
+	      (setq firstlist (make_list discr_list))
+	      (put_fields
+	        all_ipa_passes_end_delayed_queue
+	        :delqu_first firstlist
+	        :delqu_last (make_list discr_list))
+	      ))
+	(list_append firstlist fun)
+	)
+    ;; fun not a closure
+      (errormsg_plain
+        "Bad function (non closure) passed to register_all_ipa_passes_end_first")
+    ))
+
+(defun register_all_ipa_passes_end_last (fun)
+  :doc #{Use $REGISTER_ALL_IPA_PASSES_END_LAST to register a function $FUN to
+  be run at PLUGIN_ALL_IPA_PASSES_END, in last place.  $FUN must be a closure
+  which takes no arguments and whose result is ignored.}#
+  (if (is_closure fun)
+      (let ( (lastlist (get_field :delqu_last all_ipa_passes_end_delayed_queue))
+	    )
+	(enable_all_ipa_passes_end)
+	(if (null lastlist)
+	    (progn
+	      (setq lastlist (make_list discr_list))
+	      (put_fields
+	        all_ipa_passes_end_delayed_queue
+	        :delqu_first (make_list discr_list)
+	        :delqu_last lastlist)
+	      ))
+	(list_append lastlist fun)
+	)
+    ;; fun not a closure
+      (errormsg_plain
+        "Bad function (non closure) passed to register_all_ipa_passes_end_last")
+    ))
+
+
+
+;;;====================================================================
+;;;************** EARLY_GIMPLE_PASSES_START plugin event **************
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; handling PLUGIN_EARLY_GIMPLE_PASSES_START
+;; private early_gimple_passes_start handling queue
+(definstance early_gimple_passes_start_delayed_queue class_delayed_queue
+  :named_name '"early_gimple_passes_start_delayed_queue"
+  :delqu_first ()
+  :delqu_last ()
+  )
+
+(cheader #{/* flag for PLUGIN_EARLY_GIMPLE_PASSES_START declare */
+MELT_EXTERN bool MELT_MODULE_VISIBILITY  melthk_early_gimple_passes_start_registered_flag;
+}#)
+(cimplement  #{/* flag for PLUGIN_EARLY_GIMPLE_PASSES_START define */
+ bool melthk_early_gimple_passes_start_registered_flag;
+}#)
+
+;; internal hook for PLUGIN_EARLY_GIMPLE_PASSES_START 
+(defhook hook_early_gimple_passes_start () () :void
+  :predef HOOK_EARLY_GIMPLE_PASSES_START
+  (let ( (firstlist (get_field :delqu_first early_gimple_passes_start_delayed_queue))
+	 (lastlist (get_field :delqu_last early_gimple_passes_start_delayed_queue))
+	 (revlastlist (make_list discr_list))
+	 (res ())
+	 )
+;;; call the first routines in natural order
+    (foreach_pair_component_in_list
+     (firstlist)
+     (firstpair firstproc)
+     (setq res (firstproc res))
+     )
+;;; reverse the last list
+    (foreach_pair_component_in_list
+     (lastlist)
+     (lastpair lastproc)
+     (if (is_closure lastproc) (list_prepend revlastlist lastproc)))
+;;; call the last routines in reverse order
+    (if lastlist 
+	(foreach_pair_component_in_list
+	 (revlastlist)
+	 (revlastpair revlastproc)
+	 (setq res (revlastproc res))
+    ))))
+
+(cheader #{ 
+ void MELT_MODULE_VISIBILITY 
+    melt_early_gimple_passes_start_hook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+				 void* user_data ATTRIBUTE_UNUSED);
+ }#)
+
+(cimplement #{
+ void 
+ melt_early_gimple_passes_start_hook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+			      void* user_data ATTRIBUTE_UNUSED)
+ {
+   melthookproc_HOOK_EARLY_GIMPLE_PASSES_START ();
+ }
+ }#)
+
+(defun enable_early_gimple_passes_start ()
+  (code_chunk 
+   enallpassesstart_chk
+   #{ /* enable_early_gimple_passes_start $ENALLPASSESSTART_CHK */
+     if (!melthk_early_gimple_passes_start_registered_flag) {
+       melthk_early_gimple_passes_start_registered_flag = true;
+       register_callback (melt_plugin_name, PLUGIN_EARLY_GIMPLE_PASSES_START,
+			  melt_early_gimple_passes_start_hook_callback,
+			  NULL);
+     }
+   }#
+  ))
+
+(defun register_early_gimple_passes_start_first (fun)
+  :doc #{Use $REGISTER_EARLY_GIMPLE_PASSES_START_FIRST to register a function $FUN to
+  be run at PLUGIN_EARLY_GIMPLE_PASSES_START, in first place.  $FUN must be a closure
+  which takes no arguments and whose result is ignored.}#
+  (if (is_closure fun)
+      (let ( (firstlist (get_field :delqu_first early_gimple_passes_start_delayed_queue))
+	    )
+	(enable_early_gimple_passes_start)
+	(if (null firstlist)
+	    (progn
+	      (setq firstlist (make_list discr_list))
+	      (put_fields
+	        early_gimple_passes_start_delayed_queue
+	        :delqu_first firstlist
+	        :delqu_last (make_list discr_list))
+	      ))
+	(list_append firstlist fun)
+	)
+    ;; fun not a closure
+      (errormsg_plain
+        "Bad function (non closure) passed to register_early_gimple_passes_start_hook_first")
+    ))
+
+(defun register_early_gimple_passes_start_last (fun)
+  :doc #{Use $REGISTER_EARLY_GIMPLE_PASSES_START_LAST to register a function $FUN to
+  be run at PLUGIN_EARLY_GIMPLE_PASSES_START, in last place.  $FUN must be a closure
+  which takes no argument and whose result is ignored.}#
+  (if (is_closure fun)
+      (let ( (lastlist (get_field :delqu_last early_gimple_passes_start_delayed_queue))
+	    )
+	(enable_early_gimple_passes_start)
+	(if (null lastlist)
+	    (progn
+	      (setq lastlist (make_list discr_list))
+	      (put_fields
+	        early_gimple_passes_start_delayed_queue
+	        :delqu_first (make_list discr_list)
+	        :delqu_last lastlist)
+	      ))
+	(list_append lastlist fun)
+	)
+    ;; fun not a closure
+      (errormsg_plain
+        "Bad function (non closure) passed to register_early_gimple_passes_start_hook_last")
+    ))
+
+
+;;;=====================================================================
+;;;*************** EARLY_GIMPLE_PASSES_END plugin event ****************
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+(cheader #{/* flag for PLUGIN_EARLY_GIMPLE_PASSES_END declare */
+MELT_EXTERN bool MELT_MODULE_VISIBILITY  melthk_early_gimple_passes_end_registered_flag;
+}#)
+(cimplement #{/* flag for PLUGIN_EARLY_GIMPLE_PASSES_END define */
+bool  melthk_early_gimple_passes_end_registered_flag;
+}#)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; handling PLUGIN_EARLY_GIMPLE_PASSES_END
+;; private early_gimple_passes_end handling queue
+(definstance early_gimple_passes_end_delayed_queue class_delayed_queue
+  :named_name '"early_gimple_passes_end_delayed_queue"
+  :delqu_first ()
+  :delqu_last ()
+  )
+
+;; internal private hook for PLUGIN_EARLY_GIMPLE_PASSES_END 
+(defhook hook_early_gimple_passes_end () () :void
+  :predef HOOK_EARLY_GIMPLE_PASSES_END
+  (let ( (firstlist (get_field :delqu_first early_gimple_passes_end_delayed_queue))
+	 (lastlist (get_field :delqu_last early_gimple_passes_end_delayed_queue))
+	 (revlastlist (make_list discr_list))
+	 (res ())
+	 )
+;;; call the first routines in natural order
+    (foreach_pair_component_in_list
+     (firstlist)
+     (firstpair firstproc)
+     (setq res (firstproc res))
+     )
+;;; reverse the last list
+    (foreach_pair_component_in_list
+     (lastlist)
+     (lastpair lastproc)
+     (if (is_closure lastproc) (list_prepend revlastlist lastproc)))
+;;; call the last routines in reverse order
+    (foreach_pair_component_in_list
+     (revlastlist)
+     (revlastpair revlastproc)
+     (setq res (revlastproc res))
+    )))
+
+(cheader #{ 
+ void MELT_MODULE_VISIBILITY 
+    melt_early_gimple_passes_end_hook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+				 void* user_data ATTRIBUTE_UNUSED);
+ }#)
+
+(cimplement #{
+ void 
+ melt_early_gimple_passes_end_hook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+			      void* user_data ATTRIBUTE_UNUSED)
+ {
+   melthookproc_HOOK_EARLY_GIMPLE_PASSES_END ();
+ }
+ }#)
+
+(defun enable_early_gimple_passes_end ()
+  (code_chunk 
+   enallpassesend_chk
+   #{ /* enable_early_gimple_passes_end $ENALLPASSESEND_CHK */
+     if (!melthk_early_gimple_passes_end_registered_flag) {
+       melthk_early_gimple_passes_end_registered_flag = true; 
+       register_callback (melt_plugin_name, PLUGIN_EARLY_GIMPLE_PASSES_END,
+			  melt_early_gimple_passes_end_hook_callback,
+                          NULL);
+     } 
+   }#
+  ))
+
+(defun register_early_gimple_passes_end_first (fun)
+  :doc #{Use $REGISTER_EARLY_GIMPLE_PASSES_END_FIRST to register a function $FUN to
+  be run at PLUGIN_EARLY_GIMPLE_PASSES_END, in first place.  $FUN must be a closure
+  which takes no argument and whose result is ignored.}#
+  (if (is_closure fun)
+      (let ( (firstlist (get_field :delqu_first early_gimple_passes_end_delayed_queue))
+	    )
+	(enable_early_gimple_passes_end)
+	(if (null firstlist)
+	    (progn
+	      (setq firstlist (make_list discr_list))
+	      (put_fields
+	        early_gimple_passes_end_delayed_queue
+	        :delqu_first firstlist
+	        :delqu_last (make_list discr_list))
+	      ))
+	(list_append firstlist fun)
+	)
+    ;; fun not a closure
+      (errormsg_plain
+        "Bad function (non closure) passed to register_early_gimple_passes_end_first")
+    ))
+
+(defun register_early_gimple_passes_end_last (fun)
+  :doc #{Use $REGISTER_EARLY_GIMPLE_PASSES_END_LAST to register a function $FUN to
+  be run at PLUGIN_EARLY_GIMPLE_PASSES_END, in last place.  $FUN must be a closure
+  which takes no arguments and whose result is ignored.}#
+  (if (is_closure fun)
+      (let ( (lastlist (get_field :delqu_last early_gimple_passes_end_delayed_queue))
+	    )
+	(enable_early_gimple_passes_end)
+	(if (null lastlist)
+	    (progn
+	      (setq lastlist (make_list discr_list))
+	      (put_fields
+	        early_gimple_passes_end_delayed_queue
+	        :delqu_first (make_list discr_list)
+	        :delqu_last lastlist)
+	      ))
+	(list_append lastlist fun)
+	)
+    ;; fun not a closure
+      (errormsg_plain
+        "Bad function (non closure) passed to register_early_gimple_passes_end_last")
+    ))
+
+
+
+;;;=====================================================================
+;;;******************* PRE_GENERICIZE plugin event *********************
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; private pregenericize queue
+(definstance pregenericize_delayed_queue class_delayed_queue
+  :named_name '"pregenericize_delayed_queue"
+  :delqu_first ()
+  :delqu_last ()
+  )
+
+
+(cheader #{/* flag for PLUGIN_PRE_GENERICIZE declare */
+MELT_EXTERN bool MELT_MODULE_VISIBILITY  melthk_pre_genericize_registered_flag;
+}#)
+
+(cimplement #{/* flag for PLUGIN_PRE_GENERICIZE define */
+bool  melthk_pre_genericize_registered_flag;
+}#)
+
+(cheader #{ 
+ void MELT_MODULE_VISIBILITY 
+    melt_pre_genericize_hook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+				 void* user_data ATTRIBUTE_UNUSED);
+ }#)
+
+(cimplement #{
+ void 
+ melt_pre_genericize_hook_callback (void* gcc_data,
+			      void* user_data ATTRIBUTE_UNUSED)
+ {
+   melthookproc_HOOK_PRE_GENERICIZE ((tree)gcc_data);
+ }
+ }#)
+
+(defun enable_pre_genericize ()
+  (code_chunk 
+   enablepregen_chk
+   #{ /* enable_pre_genericize $enablepregen_chk */
+   if (!melthk_pre_genericize_registered_flag) {
+     melthk_pre_genericize_registered_flag = true;
+/*
+  register_callback (melt_plugin_name, PLUGIN_PRE_GENERICIZE,
+                     melt_pre_genericize_hook_callback, NULL);
+*/
+   }
+   }#)
+)
+
+(defhook hook_pre_genericize (:tree tfndecl) () :void
+  :predef HOOK_PRE_GENERICIZE
+  (let ( (firstlist (get_field :delqu_first pregenericize_delayed_queue))
+	 (lastlist (get_field :delqu_last pregenericize_delayed_queue))
+	 (revlastlist (make_list discr_list))
+	 (res ())
+	 )
+    (let ( (cfndeclv (constant_box tfndecl))
+	   )
+;;; call the first routines in natural order
+      (foreach_pair_component_in_list
+       (firstlist)
+       (firstpair firstproc)
+       (setq res (firstproc cfndeclv res))
+       )
+;;; reverse the last list
+      (foreach_pair_component_in_list
+       (lastlist)
+       (lastpair lastproc)
+       (if (is_closure lastproc) (list_prepend revlastlist lastproc)))
+;;; call the last routines in reverse order
+      (foreach_pair_component_in_list
+       (revlastlist)
+       (revlastpair revlastproc)
+       (setq res (revlastproc cfndeclv res))
+       )
+      )
+    )
+  )					;end hook_pre_genericize 
+
+
+(defun register_pre_genericize_first (fun)
+  :doc #{Use $REGISTER_PRE_GENERICIZE_FIRST to register a function $FUN to
+  be run at PLUGIN_PRE_GENERICIZE hook, in first place.  $FUN must be a closure
+  which take 1 argument (the boxed tree of function declaration being parsed).}#
+  (let ( (firstlist (get_field :delqu_first pregenericize_delayed_queue))
+	     )
+    (if (null firstlist)
+	    (progn
+	      (setq firstlist (make_list discr_list))
+	      (put_fields
+	        pregenericize_delayed_queue
+	        :delqu_first firstlist
+	        :delqu_last (make_list discr_list))
+	      ))
+    (if (is_closure fun)
+      (progn 
+	(list_append firstlist fun)
+	(enable_pre_genericize))
+      (errormsg_plain
+        "Bad hook passed to register_pre_genericize_hook")
+    ))
+)
+
+(defun register_pre_genericize_last (fun)
+  :doc #{Use $REGISTER_PRE_GENERICIZE_LAST to register a function $FUN to
+  be run at PLUGIN_PRE_GENERICIZE hook, in last place.  $FUN must be a closure
+  which take 1 argument (the boxed tree of function declaration being parsed).}#
+  (let ( (lastlist (get_field :delqu_first pregenericize_delayed_queue))
+	     )
+    (if (null lastlist)
+	    (progn
+	      (setq lastlist (make_list discr_list))
+	      (put_fields
+	        pregenericize_delayed_queue
+	        :delqu_first lastlist
+	        :delqu_last (make_list discr_list))
+	      ))
+    (if (is_closure fun)
+	(progn
+	  (list_append lastlist fun)
+	  (enable_pre_genericize))
+      (errormsg_plain
+        "Bad hook passed to register_pre_genericize_hook")
+    ))
+)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+;;;=====================================================================
+;;;******************* FINISH_TYPE plugin event *********************
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; private finishtype queue
+(definstance finishtype_delayed_queue class_delayed_queue
+  :named_name '"finishtype_delayed_queue"
+  :delqu_first ()
+  :delqu_last ()
+  )
+
+
+(cheader #{/* flag for PLUGIN_FINISH_TYPE declare */
+MELT_EXTERN bool MELT_MODULE_VISIBILITY  melthk_finish_type_registered_flag;
+}#)
+
+(cimplement #{/* flag for PLUGIN_FINISH_TYPE define */
+bool  melthk_finish_type_registered_flag;
+}#)
+
+(cheader #{ 
+ void MELT_MODULE_VISIBILITY 
+    melt_finish_type_hook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+				 void* user_data ATTRIBUTE_UNUSED);
+ }#)
+
+(cimplement #{
+ void 
+ melt_finish_type_hook_callback (void* gcc_data,
+			      void* user_data ATTRIBUTE_UNUSED)
+ {
+   melthookproc_HOOK_FINISH_TYPE ((tree)gcc_data);
+ }
+ }#)
+
+(defun enable_finish_type ()
+  (code_chunk 
+   enablepregen_chk
+   #{ /* enable_finish_type $enablepregen_chk */
+   if (!melthk_finish_type_registered_flag) {
+     melthk_finish_type_registered_flag = true;
+     register_callback (melt_plugin_name, PLUGIN_FINISH_TYPE,
+			melt_finish_type_hook_callback, NULL);
+   }
+   }#)
+)
+
+(defhook hook_finish_type (:tree tfndecl) () :void
+  :predef HOOK_FINISH_TYPE
+  (let ( (firstlist (get_field :delqu_first finishtype_delayed_queue))
+	 (lastlist (get_field :delqu_last finishtype_delayed_queue))
+	 (revlastlist (make_list discr_list))
+	 (res ())
+	 )
+    (let ( (cfndeclv (constant_box tfndecl))
+	   )
+;;; call the first routines in natural order
+      (foreach_pair_component_in_list
+       (firstlist)
+       (firstpair firstproc)
+       (setq res (firstproc cfndeclv res))
+       )
+;;; reverse the last list
+      (foreach_pair_component_in_list
+       (lastlist)
+       (lastpair lastproc)
+       (if (is_closure lastproc) (list_prepend revlastlist lastproc)))
+;;; call the last routines in reverse order
+      (foreach_pair_component_in_list
+       (revlastlist)
+       (revlastpair revlastproc)
+       (setq res (revlastproc cfndeclv res))
+       )
+      )
+    )
+  )					;end hook_finish_type 
+
+
+(defun register_finish_type_first (fun)
+  :doc #{Use $REGISTER_FINISH_TYPE_FIRST to register a function $FUN to
+  be run at PLUGIN_FINISH_TYPE hook, in first place.  $FUN must be a closure
+  which take 1 argument (the boxed tree of function declaration being parsed).}#
+  (let ( (firstlist (get_field :delqu_first finishtype_delayed_queue))
+	     )
+    (if (null firstlist)
+	    (progn
+	      (setq firstlist (make_list discr_list))
+	      (put_fields
+	        finishtype_delayed_queue
+	        :delqu_first firstlist
+	        :delqu_last (make_list discr_list))
+	      ))
+    (if (is_closure fun)
+      (progn 
+	(list_append firstlist fun)
+	(enable_finish_type))
+      (errormsg_plain
+        "Bad hook passed to register_finish_type_first")
+    ))
+)
+
+(defun register_finish_type_last (fun)
+  :doc #{Use $REGISTER_FINISH_TYPE_LAST to register a function $FUN to
+  be run at PLUGIN_FINISH_TYPE hook, in last place.  $FUN must be a closure
+  which take 1 argument (the boxed tree of function declaration being parsed).}#
+  (let ( (lastlist (get_field :delqu_first finishtype_delayed_queue))
+	     )
+    (if (null lastlist)
+	    (progn
+	      (setq lastlist (make_list discr_list))
+	      (put_fields
+	        finishtype_delayed_queue
+	        :delqu_first lastlist
+	        :delqu_last (make_list discr_list))
+	      ))
+    (if (is_closure fun)
+	(progn
+	  (list_append lastlist fun)
+	  (enable_finish_type))
+      (errormsg_plain
+        "Bad hook passed to register_finish_type_last")
+    ))
+)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;; private endmeltpass queue
+
+(definstance endmeltpass_delayed_queue class_delayed_queue
+  :named_name '"endmeltpass_delayed_queue"
+  :delqu_first ()
+  :delqu_last ()
+  )
+
+(defun run_endmeltpass_functions ()
+  (let ( (firstlist (get_field :delqu_first endmeltpass_delayed_queue))
+	 (lastlist (get_field :delqu_last endmeltpass_delayed_queue))
+	 (revlastlist (make_list discr_list))
+	 (res (instance class_container))
+	 )
+    (put_fields endmeltpass_delayed_queue
+		:delqu_first ()
+		:delqu_last ())
+;;; call the first routines in natural order
+    (foreach_pair_component_in_list
+     (firstlist)
+     (firstpair firstproc)
+     (if (is_closure firstproc) 
+	 (firstproc res))
+     )
+;;; reverse the last list
+    (foreach_pair_component_in_list
+     (lastlist)
+     (lastpair lastproc)
+     (if (is_closure lastproc) (list_prepend revlastlist lastproc)))
+;;; call the last routines in reverse order
+    (foreach_pair_component_in_list
+     (revlastlist)
+     (revlastpair revlastproc)
+     (revlastproc res)
+     )
+    )
+  )
+
+(defun at_end_of_this_melt_pass_first (fun)
+  :doc #{Use $AT_END_OF_THIS_MELT_PASS_FIRST to register a function to be called at the end of the current MELT provided GCC pass, in first place.}#
+  (let ( (firstlist (unsafe_get_field :delqu_first endmeltpass_delayed_queue))
+	 )
+    (when (null firstlist)
+      (setq firstlist (make_list discr_list))
+      (put_fields endmeltpass_delayed_queue :delqu_first firstlist))
+    (if (is_closure fun)
+	(list_append firstlist fun))))
+
+		   
+(defun at_end_of_this_melt_pass_last (fun)
+  :doc #{Use $AT_END_OF_THIS_MELT_PASS_LAST to register a function to be called 
+at the end of the current MELT provided GCC pass, in last place.}#
+  (let ( (lastlist (unsafe_get_field :delqu_last endmeltpass_delayed_queue))
+	 )
+    (when (null lastlist)
+      (setq lastlist (make_list discr_list))
+      (put_fields endmeltpass_delayed_queue :delqu_last lastlist))
+    (if (is_closure fun)
+	(list_append lastlist fun))))
+
+		   
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;;;=====================================================================
+;;;******************* FINISH_DECL plugin event *********************
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; private finishdecl queue
+(definstance finishdecl_delayed_queue class_delayed_queue
+  :named_name '"finishdecl_delayed_queue"
+  :delqu_first ()
+  :delqu_last ()
+  )
+
+
+(cheader #{/* flag for PLUGIN_FINISH_DECL declare */
+MELT_EXTERN bool MELT_MODULE_VISIBILITY  melthk_finish_decl_registered_flag;
+}#)
+
+(cimplement #{/* flag for PLUGIN_FINISH_DECL define */
+bool  melthk_finish_decl_registered_flag;
+}#)
+
+(cheader #{ 
+ void MELT_MODULE_VISIBILITY 
+    melt_finish_decl_hook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+				 void* user_data ATTRIBUTE_UNUSED);
+ }#)
+
+(cimplement #{
+ void 
+ melt_finish_decl_hook_callback (void* gcc_data,
+			      void* user_data ATTRIBUTE_UNUSED)
+ {
+ melthookproc_HOOK_FINISH_DECL ((tree)gcc_data);
+ }
+ }#)
+
+(defun enable_finish_decl ()
+  (code_chunk 
+   enablepregen_chk
+   #{ /* enable_finish_decl $enablepregen_chk */
+   if (!melthk_finish_decl_registered_flag) {
+     melthk_finish_decl_registered_flag = true;
+#if MELT_GCC_VERSION < 4007
+   melt_fatal_error ("PLUGIN_FINISH_DECL does not exist in GCC 4.6");
+#else
+  register_callback (melt_plugin_name, PLUGIN_FINISH_DECL,
+                     melt_finish_decl_hook_callback, NULL);
+#endif 
+   }
+   }#)
+)
+
+(defhook hook_finish_decl (:tree tfndecl) () :void
+  :predef HOOK_FINISH_DECL
+  (let ( (firstlist (get_field :delqu_first finishdecl_delayed_queue))
+	 (lastlist (get_field :delqu_last finishdecl_delayed_queue))
+	 (revlastlist (make_list discr_list))
+	 (res ())
+	 )
+    (let ( (cfndeclv (constant_box tfndecl))
+	   )
+;;; call the first routines in natural order
+      (foreach_pair_component_in_list
+       (firstlist)
+       (firstpair firstproc)
+       (setq res (firstproc cfndeclv res))
+       )
+;;; reverse the last list
+      (foreach_pair_component_in_list
+       (lastlist)
+       (lastpair lastproc)
+       (if (is_closure lastproc) (list_prepend revlastlist lastproc)))
+;;; call the last routines in reverse order
+      (foreach_pair_component_in_list
+       (revlastlist)
+       (revlastpair revlastproc)
+       (setq res (revlastproc cfndeclv res))
+       )
+      )
+    )
+  )					;end hook_finish_decl 
+
+
+(defun register_finish_decl_first (fun)
+  :doc #{Use $REGISTER_FINISH_DECL_FIRST to register a function $FUN to
+  be run at PLUGIN_FINISH_DECL hook, in first place.  $FUN must be a closure
+  which take 1 argument (the boxed tree of function declaration being parsed).}#
+  (let ( (firstlist (get_field :delqu_first finishdecl_delayed_queue))
+	     )
+    (if (null firstlist)
+	    (progn
+	      (setq firstlist (make_list discr_list))
+	      (put_fields
+	        finishdecl_delayed_queue
+	        :delqu_first firstlist
+	        :delqu_last (make_list discr_list))
+	      ))
+    (if (is_closure fun)
+      (progn 
+	(list_append firstlist fun)
+	(enable_finish_decl))
+      (errormsg_plain
+        "Bad hook passed to register_finish_decl_first")
+    ))
+)
+
+(defun register_finish_decl_last (fun)
+  :doc #{Use $REGISTER_FINISH_DECL_LAST to register a function $FUN to
+  be run at PLUGIN_FINISH_DECL hook, in last place.  $FUN must be a closure
+  which take 1 argument (the boxed tree of function declaration being parsed).}#
+  (let ( (lastlist (get_field :delqu_first finishdecl_delayed_queue))
+	     )
+    (if (null lastlist)
+	    (progn
+	      (setq lastlist (make_list discr_list))
+	      (put_fields
+	        finishdecl_delayed_queue
+	        :delqu_first lastlist
+	        :delqu_last (make_list discr_list))
+	      ))
+    (if (is_closure fun)
+	(progn
+	  (list_append lastlist fun)
+	  (enable_finish_decl))
+      (errormsg_plain
+        "Bad hook passed to register_finish_decl_last")
+    ))
+)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+;;;=====================================================================
+;;;******************* PASS_EXECUTION plugin event *********************
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; private pass_execution queue
+(definstance pass_execution_delayed_queue class_delayed_queue
+  :named_name '"pass_execution_delayed_queue"
+  :delqu_first ()
+  :delqu_last ()
+  )
+
+(cheader #{/* flag for PLUGIN_PASS_EXECUTION declare */
+MELT_EXTERN bool MELT_MODULE_VISIBILITY  melthk_pass_execution_registered_flag;
+}#)
+(cimplement #{/* flag for PLUGIN_PASS_EXECUTION define */
+bool  melthk_pass_execution_registered_flag;
+}#)
+
+(cheader #{ 
+ void MELT_MODULE_VISIBILITY 
+    melt_pass_execution_hook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+				 void* user_data ATTRIBUTE_UNUSED);
+ }#)
+
+(cimplement #{
+ void 
+ melt_pass_execution_hook_callback (void* gcc_data ATTRIBUTE_UNUSED,
+			      void* user_data ATTRIBUTE_UNUSED)
+ {
+   struct opt_pass* pass = (struct opt_pass*) gcc_data;
+   melthookproc_HOOK_PASS_EXECUTION (pass->name, (long) pass->static_pass_number, (long) pass->type);
+ }
+ }#)
+
+
+;; we always register the pass_execution hook, because we want the GC
+;; to run there
+(code_chunk 
+ register_pass_execution_hook_chk
+ #{ /* we always $register_pass_execution_hook_chk */
+    register_callback (melt_plugin_name, PLUGIN_PASS_EXECUTION,
+		       melt_pass_execution_hook_callback, NULL);
+ }#)
+
+(defhook hook_pass_execution (:cstring passname :long passnum typenum) () :void
+  :predef HOOK_PASS_EXECUTION
+  (let (
+	(passnameval (expr_chunk
+		      makepassname_chk  
+		      :value
+		      #{/*hook_pass_execution $MAKEPASSNAME_CHK*/
+		      meltgc_new_stringdup 
+		      ((meltobject_ptr_t) MELT_PREDEF(DISCR_STRING),
+		       $PASSNAME)
+		      }#))
+	(ptype ())
+	(firstlist (get_field :delqu_first pass_execution_delayed_queue))
+	(lastlist (get_field :delqu_last  pass_execution_delayed_queue))
+	(revlastlist (make_list discr_list))
+	)
+    (code_chunk 
+     fillptype_chk #{ /* hook_pass_execution $FILLPTYPE_CHK */
+     switch ($TYPENUM) {
+     case (int) GIMPLE_PASS: 
+       $(progn (setq ptype :gimple_pass) (void)); 
+       break;
+     case (int) RTL_PASS: 
+       $(progn (setq ptype :rtl_pass) (void)); 
+       break;
+     case (int) SIMPLE_IPA_PASS: 
+       $(progn (setq ptype :simple_ipa_pass) (void)); 
+       break;
+     case (int) IPA_PASS: 
+       $(progn (setq ptype :ipa_pass) (void)); 
+       break;
+     default: 
+       $(progn (setq ptype (constant_box typenum)) (void));
+       break;
+     } /* end switch typenum in $FILLPTYPE_CHK*/
+     }#)
+;;; call the first routines in natural order
+    (foreach_pair_component_in_list
+     (firstlist)
+     (firstpair firstproc)
+     (firstproc passnameval passnum ptype)
+     )
+;;; reverse the last list
+    (foreach_pair_component_in_list
+     (lastlist)
+     (lastpair lastproc)
+     (if (is_closure lastproc) (list_prepend revlastlist lastproc)))
+;;; call the last routines in reverse order
+    (foreach_pair_component_in_list
+     (revlastlist)
+     (revlastpair revlastproc)
+     (revlastproc passnameval passnum ptype)
+     )
+    )
+  ;; always force a minor garbage collection, otherwise other GCC
+  ;; passes could break havoc
+  (minor_garbcoll 1024)
+  )					;end hook_pass_execution 
+
+
+(defun register_pass_execution_first (fun)
+  :doc #{Use $REGISTER_PASS_EXECUTION_FIRST to register a function $FUN to
+  be run at PLUGIN_PASS_EXECUTION hook, in first place.  $FUN must be a closure
+  which take as arguments @var{boxed-pass-name} @var{raw-pass-number} @var{pass-type-keyword}.}#
+  (let ( (firstlist (get_field :delqu_first pass_execution_delayed_queue))
+	     )
+    (if (null firstlist)
+	    (progn
+	      (setq firstlist (make_list discr_list))
+	      (put_fields
+	        pass_execution_delayed_queue
+	        :delqu_first firstlist
+	        :delqu_last (make_list discr_list))
+	      ))
+    (if (is_closure fun)
+      (list_append firstlist fun)
+      (errormsg_plain
+        "Bad hook passed to register_pass_execution_hook")
+    ))
+)
+
+(defun register_pass_execution_last (fun)
+  :doc #{Use $REGISTER_PASS_EXECUTION_LAST to register a function $FUN to
+  be run at PLUGIN_PASS_EXECUTION hook, in last place.  $FUN must be a closure
+  which take as arguments @var{boxed-pass-name} @var{raw-pass-number} @var{pass-type-keyword}.}#
+  (let ( (lastlist (get_field :delqu_first pass_execution_delayed_queue))
+	     )
+    (if (null lastlist)
+	    (progn
+	      (setq lastlist (make_list discr_list))
+	      (put_fields
+ 	        pass_execution_delayed_queue
+	        :delqu_first lastlist
+	        :delqu_last (make_list discr_list))
+	      ))
+    (if (is_closure fun)
+      (list_append lastlist fun)
+      (errormsg_plain
+        "Bad hook passed to register_pass_execution_last_hook")
+    ))
+)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; gate hook for gimple passes
+(defhook hook_gimple_gate
+  () () :long
+  :predef HOOK_GIMPLE_GATE
+  (let ( (:long hasmodeflag 0)
+	 (:long okres 0)
+	 (passdict (unsafe_get_field :sysdata_pass_dict initial_system_data))
+	 (mypass ())
+	 (:long passnum 0)
+	 )
+    (code_chunk gethasmode_chk 
+		#{ /* hook_gimple_gate $GETHASMODE_CHK */
+		static const char* $GETHASMODE_CHK#modstr ;
+		if (!$GETHASMODE_CHK#modstr) 
+		$GETHASMODE_CHK#modstr = melt_argument("mode") ;
+		$HASMODEFLAG = $GETHASMODE_CHK#modstr != NULL && $GETHASMODE_CHK#modstr[0] != (char)0;
+		}#)
+    (if (not hasmodeflag)
+	(return 0))
+    (debug "hook_gimple_gate passdict=" passdict "\n initial_system_data=" initial_system_data)
+    (code_chunk 
+     getmypass_chk
+     #{ /* hook_gimple_gate $GETMYPASS_CHK */		
+     gcc_assert(current_pass != NULL) ;
+     gcc_assert(current_pass->name != NULL) ;
+     debugeprintf ("hook_gimple_gate current_pass %p named %s",
+		   (void*) current_pass->name, current_pass->name);
+     gcc_assert(current_pass->type == GIMPLE_PASS) ;
+     $MYPASS = melt_get_mapstrings ((struct meltmapstrings_st*) $PASSDICT, 
+				    current_pass->name)	;
+     $PASSNUM = current_pass->static_pass_number ;
+     }#)
+    (debug "hook_gimple_gate mypass=" mypass "\n.. passnum=" passnum)
+    (debug "hook_gimple_gate class_gcc_gimple_pass=" class_gcc_gimple_pass)
+    (if (is_a mypass class_gcc_gimple_pass)
+	(let ( (gatefun (get_field :gccpass_gate mypass))
+	       (:cstring curpassname (the_null_cstring))
+	       )
+	  (debug "hook_gimple_gate gatefun=" gatefun)
+	  (if (is_closure gatefun)
+	      (code_chunk 
+	       dogatefun_chk
+	       #{ /* hook_gimple_gate $DOGATEFUN_CHK */
+	       FILE* oldf = meltgc_set_dump_file (dump_file) ;
+	       $CURPASSNAME = current_pass->name ;
+	       $(progn
+		  (debug "hook_gimple_gate curpassname=" curpassname " mypass=" mypass)
+		  (if (gatefun mypass)
+		      (setq okres 1))
+		  (debug "hook_gimple_gate after call okres=" okres)
+		  (void)
+		  )
+	       meltgc_restore_dump_file (oldf) ;
+	       oldf = NULL ;
+	       }#)
+	    (setq okres 1)		;no closure
+	    ))
+      (debug "hook_gimple_gate strange mypass=" mypass "\n.. of discrim=" (discrim mypass))
+      )
+    (debug "hook_gimple_gate final okres=" okres)
+    (return okres)
+    ))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; execute hook for gimple passes
+(defhook hook_gimple_execute
+  () () :long
+  :predef HOOK_GIMPLE_EXECUTE
+  (let ( (:long hasmodeflag 0)
+	 (:long okres 0)
+	 (:long passnum 0)
+	 (passdict (get_field :sysdata_pass_dict initial_system_data))
+	 (mypass ())
+	 )
+    (debug "hook_gimple_execute start")
+    (code_chunk gethasmode_chk 
+		#{ /* hook_gimple_execute $GETHASMODE_CHK */
+		static const char* $GETHASMODE_CHK#modstr ;
+		if (!$GETHASMODE_CHK#modstr) 
+		$GETHASMODE_CHK#modstr = melt_argument("mode") ;
+		$HASMODEFLAG = $GETHASMODE_CHK#modstr != NULL && $GETHASMODE_CHK#modstr[0] ;
+		}#)
+    (when (not hasmodeflag)
+      (debug "hook_gimple_execute no mode")
+      (return 0))
+    (code_chunk 
+     getmypass_chk
+     #{ /* hook_gimple_execute $GETMYPASS_CHK */		
+     gcc_assert(current_pass != NULL) ;
+     gcc_assert(current_pass->name != NULL) ;
+     gcc_assert(current_pass->type == GIMPLE_PASS) ;
+     $MYPASS = melt_get_mapstrings ((struct meltmapstrings_st*) $PASSDICT, 
+				    current_pass->name)	;
+     $PASSNUM = current_pass->static_pass_number ;
+     }#)
+    (debug "hook_gimple_execute mypass=" mypass "\n.. passnum=" passnum)
+    (if (is_a mypass class_gcc_gimple_pass)
+	(let ( (execfun (get_field :gccpass_exec mypass))
+	       (:cstring curpassname (the_null_cstring))
+	       )
+	  (when (is_closure execfun)
+	    (code_chunk 
+	     doexecfun_chk
+	     #{ /* hook_gimple_execute $DOEXECFUN_CHK */
+	     FILE* oldf = meltgc_set_dump_file (dump_file) ;
+	     $CURPASSNAME = current_pass->name		   ;
+	     $(progn
+		(debug "hook_gimple_execute curpassname=" curpassname " mypass=" mypass
+		       " passnum=" passnum)
+		(multicall
+		 (resexec :long flagexec)
+		 (execfun mypass passnum)
+		 (debug "hook_gimple_execute after call resexec=" resexec 
+			" flagexec=" flagexec)
+		 (if (null resexec)
+		     (setq okres flagexec)
+		   (setq okres 1))
+		 )
+		(void)
+		)
+	     meltgc_restore_dump_file (oldf) ;
+	     oldf = NULL		     ;
+	     }#)
+	    (run_endmeltpass_functions)
+	    )))
+    (return okres)
+    ))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;; gate hook for rtl passes
+(defhook hook_rtl_gate
+  () () :long
+  :predef HOOK_RTL_GATE
+  (let ( (:long hasmodeflag 0)
+	 (:long okres 0)
+	 (passdict (get_field :sysdata_pass_dict initial_system_data))
+	 (mypass ())
+	 (:long passnum 0)
+	 )
+    (code_chunk gethasmode_chk 
+		#{ /* hook_rtl_gate $GETHASMODE_CHK */
+		static const char* $GETHASMODE_CHK#modstr ;
+		if (!$GETHASMODE_CHK#modstr) 
+		$GETHASMODE_CHK#modstr = melt_argument("mode") ;
+		$HASMODEFLAG = $GETHASMODE_CHK#modstr != NULL && $GETHASMODE_CHK#modstr[0] ;
+		}#)
+    (if (not hasmodeflag)
+	(return 0))
+    (code_chunk 
+     getmypass_chk
+     #{ /* hook_rtl_gate $GETMYPASS_CHK */		
+     gcc_assert(current_pass != NULL) ;
+     gcc_assert(current_pass->name != NULL) ;
+     gcc_assert(current_pass->type == RTL_PASS) ;
+     $MYPASS = melt_get_mapstrings ((struct meltmapstrings_st*) $PASSDICT, 
+				    current_pass->name)	;
+     }#)
+    (if (is_a mypass class_gcc_rtl_pass)
+	(let ( (gatefun (get_field :gccpass_gate mypass))
+	       (:cstring curpassname (the_null_cstring))
+	       )
+	  (if (is_closure gatefun)
+	      (code_chunk 
+	       dogatefun_chk
+	       #{ /* hook_rtl_gate $DOGATEFUN_CHK */
+	       FILE* oldf = meltgc_set_dump_file (dump_file) ;
+	       $CURPASSNAME = current_pass->name;
+	       $PASSNUM = current_pass->static_pass_number;
+	       $(progn
+		  (debug "hook_rtl_gate curpassname=" curpassname " mypass=" mypass)
+		  (if (gatefun mypass passnum)
+		      (setq okres 1))
+		  (debug "hook_rtl_gate after call okres=" okres)
+		  (void)
+		  )
+	       meltgc_restore_dump_file (oldf) ;
+	       oldf = NULL ;
+	       }#)
+	    (setq okres 1)		;no closure
+	    )))
+    (return okres)
+))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; execute hook for rtl passes
+(defhook hook_rtl_execute
+  () () :long
+  :predef HOOK_RTL_EXECUTE
+  (let ( (:long hasmodeflag 0)
+	 (:long okres 0)
+	 (passdict (get_field :sysdata_pass_dict initial_system_data))
+	 (mypass ())
+	 (:long passnum 0)
+	 )
+    (code_chunk gethasmode_chk 
+		#{ /* hook_rtl_execute $GETHASMODE_CHK */
+		static const char* $GETHASMODE_CHK#modstr ;
+		if (!$GETHASMODE_CHK#modstr) 
+		$GETHASMODE_CHK#modstr = melt_argument("mode") ;
+		$HASMODEFLAG = $GETHASMODE_CHK#modstr != NULL && $GETHASMODE_CHK#modstr[0] ;
+		}#)
+    (if (not hasmodeflag)
+	(return 0))
+    (code_chunk 
+     getmypass_chk
+     #{ /* hook_rtl_execute $GETMYPASS_CHK */		
+     gcc_assert(current_pass != NULL) ;
+     gcc_assert(current_pass->name != NULL) ;
+     gcc_assert(current_pass->type == RTL_PASS) ;
+     $MYPASS = melt_get_mapstrings ((struct meltmapstrings_st*) $PASSDICT, 
+				    current_pass->name)	;
+     }#)
+    (if (is_a mypass class_gcc_rtl_pass)
+	(let ( (execfun (get_field :gccpass_exec mypass))
+	       (:cstring curpassname (the_null_cstring))
+	       )
+	  (when (is_closure execfun)
+	      (code_chunk 
+	       doexecfun_chk
+	       #{ /* hook_rtl_execute $DOEXECFUN_CHK */
+	       $PASSNUM = current_pass->static_pass_number;
+	       FILE* oldf = meltgc_set_dump_file (dump_file) ;
+	       $CURPASSNAME = current_pass->name ;
+	       $(progn
+		 (debug "hook_rtl_execute curpassname=" curpassname " mypass=" mypass
+			" passnum=" passnum)
+		 (multicall
+		  (resexec :long flagexec)
+		  (execfun mypass passnum)
+		  (debug "hook_rtl_execute after call resexec=" resexec 
+			 " flagexec=" flagexec)
+		  (if (null resexec)
+		      (setq okres flagexec)
+		    (setq okres 1))
+		  )
+		 (void)
+		 )
+	       meltgc_restore_dump_file (oldf) ;
+	       oldf = NULL ;
+	       }#)
+	      (run_endmeltpass_functions)
+	    )))
+    (return okres)
+))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; execute hook for simple_ipa passes
+(defhook hook_simple_ipa_execute
+  () () :long
+  :predef HOOK_SIMPLE_IPA_EXECUTE
+  (let ( (:long hasmodeflag 0)
+	 (:long okres 0)
+	 (passdict (get_field :sysdata_pass_dict initial_system_data))
+	 (mypass ())
+	 (:long passnum 0)
+	 )
+    (code_chunk gethasmode_chk 
+		#{ /* hook_simple_ipa_execute $GETHASMODE_CHK */
+		static const char* $GETHASMODE_CHK#modstr ;
+		if (!$GETHASMODE_CHK#modstr) 
+		$GETHASMODE_CHK#modstr = melt_argument("mode") ;
+		$HASMODEFLAG = $GETHASMODE_CHK#modstr != NULL && $GETHASMODE_CHK#modstr[0] ;
+		}#)
+    (if (not hasmodeflag)
+	(return 0))
+    (code_chunk 
+     getmypass_chk
+     #{ /* hook_simple_ipa_execute $GETMYPASS_CHK */		
+     gcc_assert(current_pass != NULL) ;
+     gcc_assert(current_pass->name != NULL) ;
+     gcc_assert(current_pass->type == SIMPLE_IPA_PASS) ;
+     $MYPASS = melt_get_mapstrings ((struct meltmapstrings_st*) $PASSDICT, 
+				    current_pass->name)	;
+     }#)
+    (if (is_a mypass class_gcc_simple_ipa_pass)
+	(let ( (execfun (get_field :gccpass_exec mypass))
+	       (:cstring curpassname (the_null_cstring))
+	       )
+	  (when (is_closure execfun)
+	      (code_chunk 
+	       doexecfun_chk
+	       #{ /* hook_simple_ipa_execute $DOEXECFUN_CHK */
+	       $PASSNUM = current_pass->static_pass_number;
+	       FILE* oldf = meltgc_set_dump_file (dump_file) ;
+	       $CURPASSNAME = current_pass->name ;
+	       $(progn
+		 (debug "hook_simple_ipa_execute curpassname=" curpassname " mypass=" mypass
+			" passnum=" passnum)
+		 (multicall
+		  (resexec :long flagexec)
+		  (execfun mypass passnum)
+		  (debug "hook_simple_ipa_execute after call resexec=" resexec 
+			 " flagexec=" flagexec)
+		  (if (null resexec)
+		      (setq okres flagexec)
+		    (setq okres 1))
+		  )
+		 (void)
+		 )
+	       meltgc_restore_dump_file (oldf) ;
+	       oldf = NULL ;
+	       }#)
+	      (run_endmeltpass_functions)
+	    )))
+    (return okres)
+))
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; attribute definer hook
+;; private hook definer queue
+
+(definstance attribute_definer_delayed_queue class_delayed_queue
+  :named_name '"attribute_definer_delayed_queue"
+  :delqu_first (make_list discr_list)
+  :delqu_last (make_list discr_list)
+  )
+
+(defhook hook_melt_attribute_definer 
+  (:tree decl :tree name :value attrseq
+	 :cstring fileloc :long lineno)      
+  ()
+  :void
+  :predef HOOK_MELT_ATTRIBUTE_DEFINER
+  (let ( (firstlist (get_field :delqu_first attribute_definer_delayed_queue))
+	 (lastlist (get_field :delqu_last attribute_definer_delayed_queue))
+	 (revlastlist (make_list discr_list))
+	 (rescont (instance class_reference))
+	 )
+;;; call the first routines in natural order
+    (foreach_pair_component_in_list
+     (firstlist)
+     (curpair firstproc)
+     (if (is_closure firstproc)
+	 (firstproc attrseq rescont decl name fileloc lineno))
+     )
+;;; reverse the last list
+    (foreach_pair_component_in_list
+     (lastlist)
+     (curpair lastproc)
+     (if (is_closure lastproc) (list_prepend revlastlist lastproc))
+     )
+    (foreach_pair_component_in_list
+     (revlastlist)
+     (curpair lastproc)
+     (lastproc attrseq rescont decl name fileloc lineno)
+     )
+    ))
+
+(defun at_melt_attribute_first (fun)
+  :doc #{Use $AT_MELT_ATTRIBUTE_FIRST to register a function to be run at MELT
+attribute definition, in first place.}#
+  (let ( (firstlist (unsafe_get_field :delqu_first attribute_definer_delayed_queue))
+	 )
+    (if (is_closure fun) (list_append firstlist fun)))
+  ) 
+
+
+(defun at_melt_attribute_last (fun)
+  :doc #{Use $AT_MELT_ATTRIBUTE_FIRST to register a function to be run at MELT
+attribute definition, in last place.}#
+  (let ( (lastlist (unsafe_get_field :delqu_last attribute_definer_delayed_queue))
+	 )
+    (if (is_closure fun) (list_append lastlist fun)))
+  ) 
+
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; private final exit queue
+(definstance final_exit_delayed_queue class_delayed_queue
+  :named_name '"final_exit_delayed_queue"
+  :delqu_first (make_list discr_list)
+  :delqu_last (make_list discr_list)
+  )
+
+;;; exit hook 
+(defhook hook_exit_finalizer () () :void
+  :predef HOOK_EXIT_FINALIZER
+  (debug "hook_exit_finalizer final_exit_delayed_queue=" final_exit_delayed_queue)
+  (let ( (firstlist (get_field :delqu_first final_exit_delayed_queue))
+	 (lastlist (get_field :delqu_last final_exit_delayed_queue))
+	 (revlastlist (make_list discr_list))
+	 )
+;;; call the first routines in natural order
+    (foreach_pair_component_in_list
+     (firstlist)
+     (curpair firstproc)
+     (firstproc ())
+     )
+;;; reverse the last list
+    (foreach_pair_component_in_list
+     (lastlist)
+     (curpair lastproc)
+     (if (is_closure lastproc) (list_prepend revlastlist lastproc)))
+;;; call the last routines in reverse order
+    (foreach_pair_component_in_list
+     (revlastlist)
+     (curpair lastproc)
+     (lastproc ())
+     )))
+    
+
+(defun at_exit_first (fun)
+  :doc #{Use $AT_EXIT_FIRST to register a function to be run at MELT
+exit, in first place.}#
+  (let ( (firstlist (unsafe_get_field :delqu_first final_exit_delayed_queue))
+	 )
+    (if (is_closure fun) (list_append firstlist fun)))
+  )  
+
+(defun at_exit_last (fun)
+  :doc #{Use $AT_EXIT_LAST to register a function to be run at MELT
+exit, in last place.}#
+  (let ( (lastlist (unsafe_get_field :delqu_last final_exit_delayed_queue))
+	 )
+    (if (is_closure fun) (list_append lastlist fun)))
+  )
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(export_values
+ at_end_of_this_melt_pass_first
+ at_end_of_this_melt_pass_last
+ at_exit_first
+ at_exit_last
+ at_finish_unit_first
+ at_finish_unit_last
+ at_melt_attribute_first
+ at_melt_attribute_last
+ at_start_unit_first
+ at_start_unit_last
+ hook_low_debug_value_at
+ hook_override_gate
+ register_all_ipa_passes_end_first
+ register_all_ipa_passes_end_last
+ register_all_ipa_passes_start_first
+ register_all_ipa_passes_start_last
+ register_all_passes_end_first
+ register_all_passes_end_last
+ register_all_passes_start_first
+ register_all_passes_start_last
+ register_early_gimple_passes_end_first
+ register_early_gimple_passes_end_last
+ register_early_gimple_passes_start_first
+ register_early_gimple_passes_start_last
+ register_finish_decl_first
+ register_finish_decl_last
+ register_finish_type_first
+ register_finish_type_last
+ register_override_gate_first
+ register_override_gate_last
+ register_pass_execution_first
+ register_pass_execution_last
+ register_pre_genericize_first
+ register_pre_genericize_last
+ unregister_override_gate_first
+ unregister_override_gate_last
+ )
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+(cheader #{ /* header from warmelt-hooks.melt for poll etc... */
+#include <poll.h>
+
+#define MELT_BUFSIZE 8192
+#define MELT_POLL_DELAY_MILLISEC 500
+}#)
+
+
+
+(defvar melt_inpchanbuck) ;;contain bucket of longs for input handling
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; internal utility to read input and invoke the callbacks
+(defun melt_invoke_input_callbacks (tupinch tupstate :long nbins)
+  (debug "melt_invoke_input_callbacks tupinch=" tupinch
+	 "\n.. tupstate=" tupstate
+	 "\n.. nbins=" nbins)
+  (block_signals 
+   () ()   
+   (let ( (removelist (make_list discr_list))
+	  (buck melt_inpchanbuck)
+	  )
+     (foreach_long_upto
+      (0 (-i nbins 1))
+      (:long ix)
+      (let ( (curinch (multiple_nth tupinch ix))
+	     (curstate (multiple_nth tupstate ix))
+	     (curfd (get_int curinch))
+	     (:long readcnt -2)
+	     (sbuf (get_field :inch_sbuf curinch))
+	     (clos (get_field :inch_clos curinch))
+	     )
+	(debug "melt_invoke_input_callbacks ix#" ix " curfd#" curfd
+	       " curinch=" curinch "\n.. curstate=" curstate)
+	(assert_msg "check curinch" (is_a curinch class_input_channel_handler) curinch)
+	(assert_msg "check curfd" (>=i curfd 0) curfd)
+	(if curstate
+	    (progn ;; should read and callback if got entire message
+	      (code_chunk 
+	       read_chk
+	       #{ /* melt_invoke_input_callbacks $READ_CHK */
+	       static char rdbuf[MELT_BUFSIZE] ;
+	       memset (&rdbuf, 0, sizeof (rdbuf)) ;
+	       $READCNT = read ($CURFD, rdbuf, sizeof(rdbuf)) ;
+	       if ($READCNT > 0)
+	         meltgc_add_out_raw_len ((melt_ptr_t) $SBUF, rdbuf, $READCNT) ;
+	       }#)
+	      (when (==i readcnt 0)
+		(list_append removelist curinch)
+		(setq curstate ()))
+	      (void)
+	      )
+	  (progn ;; should callback for eof close and remove from bucks
+	    (list_append removelist curinch)
+	    ))
+	;; loop to handle every 2-newline ended paragraph in the sbuf
+	(forever 
+	 scanloop
+	 (let ( (:long stop 0)
+		(seqv ())
+		)
+	   (code_chunk 
+	    eat_chk
+	    #{ /* melt_invoke_input_callbacks $EAT_CHK */
+	    const char* bufdata = melt_strbuf_str ((melt_ptr_t) $SBUF);
+	    char* buf2nl = bufdata
+		          ? CONST_CAST (char*, strstr(bufdata,"\n\n")) 
+		          : NULL;
+            if (buf2nl) 
+              {
+	        int paralen = buf2nl - bufdata + 2;
+		((char*) buf2nl)[1] = '\0';
+		$SEQV =  meltgc_read_from_rawstring (bufdata, NULL, 
+		     			  	     UNKNOWN_LOCATION);
+		melt_strbuf_consume ((melt_ptr_t) $SBUF, paralen);
+	      }
+	    else 
+              {
+	        $STOP = 1;
+		if (!$CURSTATE && bufdata) {
+		  int buflen = strlen (bufdata);
+		  $SEQV = meltgc_read_from_rawstring (bufdata, NULL, 
+		     			  	     UNKNOWN_LOCATION);
+		  melt_strbuf_consume ((melt_ptr_t) $SBUF, buflen);
+		}
+              }
+	    }#)
+	   (when seqv
+	     (debug "melt_invoke_input_callbacks seqv=" seqv "\n curinch=" curinch)
+	     (clos curinch seqv))
+	   (if stop (exit scanloop))
+	   )
+	 )				;end scanloop
+	(when (null curstate)
+	  (debug "melt_invoke_input_callbacks eof curinch=" curinch)
+	  (clos curinch ())
+	)
+      )
+     ) 					;end for ix
+     (debug "melt_invoke_input_callbacks removelist=" removelist)
+     (foreach_pair_component_in_list
+      (removelist)
+      (curpair curemove)
+      (debug "melt_invoke_input_callbacks curemove=" curemove)
+      (setq buck (bucketlong_remove buck (get_int curemove)))
+      )
+     (setq melt_inpchanbuck buck)
+   )
+  )
+)					;end melt_invoke_input_callbacks 
+
+
+
+(defhook hook_poll_inputs 
+  (:long delayms)
+  ()
+  :void
+  :predef HOOK_POLL_INPUTS
+  :doc #{The $HOOK_POLL_INPUTS is making a multiplexing @code{poll(2)}
+  syscall -with the milliseconds delay given by $DELAYMS- and then
+  reading appropriate input file descriptors and running the callback
+  registered with $REGISTER_INPUT_CHANNEL_HANDLER. It is usually
+  called to service the SIGIO signal, but could be called
+  elsewhere. For experts mostly.}#
+  (let ( (inchbuck melt_inpchanbuck)
+	 (:long nbinch (bucketlong_count inchbuck))
+	 (:long respoll 0)
+	)
+    (debug "hook_poll_inputs inchbuck=" inchbuck " delayms=" delayms)
+    (when (==i nbinch 0)
+      (debug "hook_poll_inputs empty inchbuck")
+      (code_chunk 
+       pollsleep_chk 
+       #{/* hook_poll_inputs $POLLSLEEP_CHK do the poll */
+       $RESPOLL = poll (NULL, 0, $DELAYMS);
+       }#)
+      (return))
+    (let (
+	  (tupinch (make_multiple discr_multiple nbinch))
+	  (:long nbfd 0)
+	  )
+      (code_chunk 
+       pollin_chk 
+       #{ /* hook_poll_inputs $POLLIN_CHK start */
+       struct pollfd *fdtab
+         = (struct pollfd *) xcalloc ($NBINCH+1, sizeof(struct pollfd));
+       /* hook_poll_inputs $POLLIN_CHK iteration to fill fdtab */
+       $(foreach_in_bucketlong
+         (inchbuck)
+         (:long curfd :value curinchd)
+         (debug "hook_poll_inputs curfd#" curfd ", curinchd=" curinchd)
+         (when (is_a curinchd class_input_channel_handler)
+	   (assert_msg "check curinchd" (==i (get_int curinchd) curfd) curinchd curfd)
+	   (code_chunk 
+	    addfd_chk
+	    #{ /* hook_poll_inputs $POLLIN_CHK with $ADDFD_CHK */
+	    fdtab[$NBFD].fd = (int) $CURFD ;
+	    fdtab[$NBFD].events = POLLIN ;
+	    fdtab[$NBFD].revents = 0 ;
+	    }#)
+	   (multiple_put_nth tupinch nbfd curinchd)
+	   (setq nbfd (+i nbfd 1))
+	   )
+         )
+       $(progn (debug "hook_poll_inputs nbfd=" nbfd " tupinch=" tupinch) (void))
+       /* hook_poll_inputs $POLLIN_CHK do the poll */
+       $RESPOLL = poll (fdtab, $NBFD, $DELAYMS);
+       debugeprintf ("hook_poll_inputs respoll=%ld", $RESPOLL);
+       $(if (>i respoll 0)
+	    (let ( 
+		  (tupstate (make_multiple discr_multiple nbfd))
+		  (badinchlist (make_list discr_list))
+		  )
+	  (foreach_long_upto
+	   (0 (-i nbfd 1))
+	   (:long ix)
+	   (let ( (curinchd (multiple_nth tupinch ix))
+		  )
+	     (debug "hook_poll_inputs ix#" ix " curinchd=" curinchd)
+	     (cond 
+	      ( (expr_chunk testpollin_chk :long 
+			   ##{/* hook_poll_inputs $TESTPOLLIN_CHK */ 
+			   fdtab[$IX].revents & POLLIN}#)
+		(debug "hook_poll_inputs POLLIN ix#" ix)
+		(multiple_put_nth tupstate ix :true) 
+		)
+	      ;; POLLERR & POLLHUP cannot happen for input polling
+	      ( (expr_chunk testpollnval_chk :long 
+			   ##{/* hook_poll_inputs $TESTPOLLNVAL_CHK */ 
+			   fdtab[$IX].revents & POLLNVAL}#)
+		(debug "hook_poll_inputs POLLNVAL ix#" ix)
+		(multiple_put_nth tupstate ix ())
+		(list_append badinchlist curinchd)
+		)
+	      )
+	   )) ;; end foreach_long_upto ix
+	  (debug "hook_poll_inputs nbfd#" nbfd
+		 "\n.. tupstate=" tupstate
+		 "\n.. badinchlist=" badinchlist)
+	  (foreach_pair_component_in_list
+	   (badinchlist)
+	   (curpair curinchb)
+	   (debug "hook_poll_inputs bad curinchb=" curinchb)
+	   (bucketlong_put inchbuck (get_int curinchb) :true)
+	   )
+	  (debug "hook_poll_inputs before melt_invoke_input_callbacks tupinch=" tupinch
+		 "\n.. tupstate=" tupstate "\n.. nbfd=" nbfd)
+	  (melt_invoke_input_callbacks tupinch tupstate nbfd)	
+	  (debug "hook_poll_inputs after melt_invoke_input_callbacks nbfd=" nbfd)
+	  (void)
+	  ))
+       /* hook_poll_inputs $POLLIN_CHK final */
+       free (fdtab);
+       /* hook_poll_inputs $POLLIN_CHK end */ }#))
+      )
+)
+
+
+(defun is_polling_inputs ()
+  :doc #{$IS_POLLING_INPUTS return :TRUE with secondarily the number of input channels 
+  if some channels are polling, or nil otherwise}# 
+  (let ( (inchbuck melt_inpchanbuck)
+	 (:long nbinch (bucketlong_count inchbuck))
+	 )
+    (if nbinch (return :true nbinch)
+      (return () 0))
+))
+
+(defun every_polling_input (f)
+  :doc #{$EVERY_POLLING_INPUTS applies the given closure $F to every
+  input channel. Iteration is stopped if that application returns nil.}# 
+  (let ( (inchbuck melt_inpchanbuck)
+	 (:long nbinch (bucketlong_count inchbuck))
+	 (lischan (make_list discr_list))
+	 )
+    (when nbinch 
+      (block_signals 
+       () ()
+       (foreach_in_bucketlong
+	(inchbuck)
+	(:long fd :value chv)
+	(if (is_a chv class_input_channel_handler)
+	    (list_append lischan chv))
+	))
+      (when (is_closure f)
+	(foreach_pair_component_in_list 
+	 (lischan)
+	 (curpair curchan)
+	 (debug "every_polling_input curchan=" curchan)
+	 (if (null (f curchan))
+	     (setq curpair ())))))))
+
+(defun get_polling_input (bi)
+  :doc #{The function $GET_POLLING_INPUT gets the polling input associated to integer in $BI.}#
+  (let ( (inchbuck melt_inpchanbuck)
+	 (:long nbinch (bucketlong_count inchbuck))
+	 (:long i (get_int bi))
+	 )
+    (when nbinch 
+      (block_signals 
+       () ()
+       (let ( (curb (bucketlong_get inchbuck i))
+	      )
+	 (if (is_a curb class_input_channel_handler)
+	     (return curb)))))
+    (return ())
+  ))
+
+;;;;;;;;;;;;;;;;
+(defun register_input_channel_handler (clos data :long inchfd)
+  :doc #{$REGISTER_INPUT_CHANNEL_HANDLER registers an asynchronous
+  input channel handler, such as for the graphical user interface
+  probe. $CLOS is the registered closure, $DATA is some client data,
+  $INCHFD is the input Unix file descriptor. When an entire
+  message (double-newline ended sequence of MELT values in MELT
+  syntax) is recieved from the $INCHFD, the $CLOS is applied to the
+  input channel handler -containing the data as its $INCH_DATA field-,
+  a read-only instance of $CLASS_INPUT_CHANNEL_HANDLER, and to the
+  read list. When end-of-file is obtained on $INCHFD, the closure is
+  similarily applied with a null value instead of the read list.}#
+  (debug "register_input_channel_handler clos=" clos " data=" data 
+	 " inchfd=" inchfd)
+  (let ( (:long goodinchfd 0) )
+    (if (and (is_closure clos)
+	     (>=i inchfd 0))
+	(code_chunk
+	 statinchfdchk
+	 #{ /*register_input_channel_handler $STATINCHFDCHK */ {
+         struct stat $STATINCHFDCHK#_stat;
+	 memset (& $STATINCHFDCHK#_stat, 0, sizeof(struct stat));
+	 if (fstat ($INCHFD, & $STATINCHFDCHK#_stat))
+	 warning(0, "MELT bad registered input channel fd#%d - %s",
+		    (int) $INCHFD, xstrerror (errno));
+	 else
+	 $GOODINCHFD = 1; 
+	 } /* end $STATINCHFDCHK */ }#)
+      )
+    (if (not goodinchfd) (return)))
+  (let ( (insbuf (make_strbuf discr_strbuf)) 
+	 (inchdlr (instance class_input_channel_handler 
+			    :inch_sbuf insbuf
+			    :inch_clos clos
+			    :inch_data data))
+	 (inbuck melt_inpchanbuck)
+	 )
+    (put_int inchdlr inchfd)
+    (if (not (is_bucketlong inbuck))
+	(let ( (newinbuck (make_bucketlong discr_bucket_longs 50))
+	       )
+	  (setq inbuck newinbuck)))
+    (let ( (updatedinbuck (bucketlong_put inbuck inchfd inchdlr))
+	   )
+      (setq melt_inpchanbuck updatedinbuck)
+      (code_chunk 
+       fcntlinchfdchk
+       #{ /* $FCNTLINCHFDCHK start */
+	  if (fcntl ($INCHFD, F_SETOWN, getpid()))
+	  melt_fatal_error("MELT failed to set ownership (F_SETOWN) fd #%d - %s",
+			   (int) $INCHFD, xstrerror (errno));
+          /* end  $FCNTLINCHFDCHK */
+	  }#)
+      )))
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; the sigio handler, called from safe places
+(defhook hook_handle_sigio
+  () ()
+  :void
+  :predef HOOK_HANDLE_SIGIO
+  (hook_poll_inputs 250)
+)
+
+(export_values
+ every_polling_input
+ get_polling_input
+ hook_handle_sigio 
+ hook_poll_inputs 
+ is_polling_inputs
+ melt_invoke_input_callbacks
+)
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defvar melt_alarmbucket)
+
+;; the sigalarm handler, called from safe places
+(defhook hook_handle_sigalrm
+  () ()
+  :void
+  :predef HOOK_HANDLE_SIGALRM
+  (let ( (alarmbuck melt_alarmbucket)
+	 (:long cureltim (relative_time_millisec))
+	 )
+    (debug "hook_handle_sigalrm start alarmbuck=" alarmbuck " cureltim=" cureltim)
+    (unless alarmbuck (return))
+    ;;
+    (forever
+     handleloop
+     (assert_msg "check alarmbuck" (is_bucketlong alarmbuck) alarmbuck)
+     (unless (bucketlong_count alarmbuck) (exit handleloop))
+     (let ( (:long nextim (bucketlong_nth_key alarmbuck 0))
+	    (nextalhd (bucketlong_nth_val alarmbuck 0))
+	    )
+       (debug "hook_handle_sigalrm nextim=" nextim " nextalhd=" nextalhd)
+       (unless nextim (exit handleloop))
+       (unless (>i nextim cureltim) (exit handleloop))
+       (assert_msg "check mextalhd" (is_a nextalhd class_alarm_handler) nextalhd)
+       (setq alarmbuck (bucketlong_remove alarmbuck nextim))
+       (block_signals
+	() ()
+       (let ( (clos (get_field :alarmh_clos nextalhd))
+	      )
+	 (if (is_closure clos)
+	     (let ( (res (clos nextalhd))
+		    )
+	       (if res
+		   (let ( (:long newperiod (get_int (get_field :alarmh_period nextalhd)))
+			  )
+		     (if (>i newperiod 10)
+			 (setq alarmbuck 
+			       (bucketlong_put alarmbuck 
+					       (+i newperiod cureltim) nextalhd)))))))))
+       ))				;end handleloop
+    ;;
+    (setq melt_alarmbucket alarmbuck)
+    (let ( (:long nowtim (relative_time_millisec))
+	   (:long nextalarm (bucketlong_nth_key alarmbuck 0))
+	   )
+      (cond ( (>i nextalarm nowtim)
+	      ;; set alarm to next time
+	      (set_real_timer_millisec (-i nextalarm nowtim)))
+	    ( (>i nextalarm 0)
+	      ;; missed time, set a quick alarm
+	      (set_real_timer_millisec 30))
+	    ( :else
+	      ;; no more alarm
+	      (set_real_timer_millisec 0))
+	    )
+      )))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; alarm processing need a sorted bucket of timeouts -> alarm-handlers
+
+(defun register_alarm_timer (clos :long periodms :value data)
+  :doc #{$REGISTER_ALARM_TIMER is the low level function to register
+  the closure $CLOS to be called periodically with a period of $PERIODMS
+  -at least 50- milliseconds and some client $DATA. The closure should
+  return non-nil for the alarm to be repeated. $REGISTER_ALARM_TIMER
+  returns a timer object, usable for $UNREGISTER_ALARM_TIMER.}#
+  (debug "register_alarm_timer clos=" clos " periodms=" periodms)
+  (if (is_closure clos)
+      (if (>=i periodms 50)
+	  (let ( (res ())
+		 )
+	    (block_signals 
+	     () ()
+	     (let ( (periodbox (make_integerbox discr_constant_integer periodms))
+		    (oldbuck (or melt_alarmbucket (make_bucketlong discr_bucket_longs 31)))
+		    (alhd (instance class_alarm_handler
+				    :alarmh_period periodbox
+				    :alarmh_clos clos
+				    :alarmh_data data))
+		    (:long cureltim (relative_time_millisec))
+		    (:long nextim (+i cureltim periodms))
+		    (newbuck (bucketlong_put oldbuck nextim alhd))
+		    (:long firstkey (bucketlong_nth_key newbuck 0))
+		    (:long firstdelay (if firstkey (-i firstkey cureltim)))
+		    )
+	       (setq melt_alarmbucket newbuck)
+	       (set_real_timer_millisec firstdelay)
+	       (setq res alhd)))
+	    (return res)
+	    ))))
+
+
+(defun unregister_alarm_timer (tim)
+  :doc #{Unregister a timer obtained by $REGISTER_ALARM_TIMER.}#
+  (debug "unregister_alarm_timer tim=" tim)
+  (unless tim (return))
+  (unless (is_not_a tim class_alarm_handler)
+    (assert_msg "check tim" (is_a tim class_alarm_handler) tim)
+    (return))
+  (block_signals
+   () ()
+   (let ( (oldbuck melt_alarmbucket)
+	  (:long oldbucklen (bucketlong_count oldbuck))
+	  (newbuck (make_bucketlong discr_bucket_longs oldbucklen))
+	  )
+     (unless oldbucklen 
+       ;; no more alarms
+       (setq melt_alarmbucket ())
+       (set_real_timer_millisec 0)
+       (return))
+     (foreach_in_bucketlong
+      (oldbuck)
+      (:long oldkey :value oldala)
+      (assert_msg "check oldala" (is_a oldala class_alarm_handler) oldala)
+      (unless (== oldala tim)
+	(setq newbuck (bucketlong_put newbuck oldkey oldala))
+	))
+     (setq melt_alarmbucket newbuck)
+     )
+   ))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defvar melt_childbuck) ;; contain the bucket from childpid to handlers
+;; the sigchld handler, called from safe places
+(defhook hook_handle_sigchld
+  () ()
+  :void
+  :predef HOOK_HANDLE_SIGCHLD
+  (debug "hook_handle_sigchld melt_childbuck=" melt_childbuck)
+  (let ( (lischph (make_list discr_list))
+	 (liswstat (make_list discr_list))
+	 (buck melt_childbuck)
+	 )
+    (unless (is_bucketlong buck) (return))
+    (block_signals 
+     () ()
+     (let ( (:long waitfail 0)
+	    (:long pidstat 0)
+	    )
+       (code_chunk 
+	waitprobchk
+	#{ /* hook_handle_sigchld $WAITPROBCHK */
+	$WAITFAIL = melt_wait_for_probe (WNOHANG) ;
+	}#)
+       (unless waitfail
+	 (debug "hook_handle_sigchld waited for probe")
+	 (return))
+       (foreach_in_bucketlong
+	(buck)
+	(:long keypid :value chph)
+	(assert_msg "check chph" (is_a chph class_child_process_handler) chph)
+	(assert_msg "check pid" 
+		    (==i keypid (get_int (get_field  :chilproh_pid chph))) keypid chph)
+	(code_chunk 
+	 waitpidchk
+         #{ /* hook_handle_sigchld $WAITPIDCHK */ {
+         pid_t wpid = 0 ;
+         int pstatus = 0 ;
+         $WAITFAIL = 0L ;
+         $PIDSTAT = 0L ;
+         wpid = waitpid ((pid_t) $KEYPID, &pstatus, WNOHANG) ;
+         $WAITFAIL = (wpid != (pid_t) $KEYPID) ;
+         if (!$WAITFAIL)
+	   $PIDSTAT = pstatus ;
+         } /* hook_handle_sigchld end $WAITPIDCHK */ }#)
+	(unless waitfail
+	  (list_append lischph chph)
+	  (list_append liswstat (make_integerbox discr_constant_integer pidstat)))
+	)
+       )
+     )
+    (let ( (tupchph (list_to_multiple lischph discr_multiple))
+	   (tupwstat (list_to_multiple liswstat discr_multiple))
+	   )
+      (foreach_in_multiple
+       (tupchph)
+       (curchph :long ix)
+       (let ( (:long curwstat (get_int (multiple_nth tupwstat ix)))
+	      (:long curpid (get_int (get_field :chilproh_pid curchph)))
+	      (curclos (get_field :chilproh_clos curchph))
+	      (:long exited 0)
+	      (:long exitstat 0)
+	      (:long signaled 0)
+	      (:long termsig 0)
+	      (:value termsigname ())
+	      )
+	 (debug "hook_handle_sigchld curchph=" curchph
+		" curwstat=" curwstat " ix=" ix)
+	 (block_signals
+	  () ()
+	  (let ( (cbuck melt_childbuck)
+		 )
+	    (setq cbuck (bucketlong_remove cbuck curpid))
+	    (setq melt_childbuck cbuck)
+	    ))
+	 (code_chunk 
+	  lookwstatchk
+          #{ /* hook_handle_sigchld $LOOKWSTATCHK */ {
+          int wstat = (int) $CURWSTAT	;
+          if (WIFEXITED(wstat)) {
+	  $EXITED = 1			    ;
+	  $EXITSTAT = WEXITSTATUS (wstat)   ;
+          } 
+          else if (WIFSIGNALED(wstat)) {
+          $SIGNALED = 1			;
+          $TERMSIG = WTERMSIG (wstat)	;
+          $TERMSIGNAME = meltgc_new_string
+	  ((meltobject_ptr_t) MELT_PREDEF(DISCR_STRING),
+	   strsignal($TERMSIG))		;
+          }
+          } /* end hook_handle_sigchld $LOOKWSTATCHK */  }#)
+	 ;;
+	 (block_signals
+	  () ()
+	  (cond
+	   (exited 
+	    (cond 
+	     ( (==i exitstat 0)
+	       ;; successful exit
+	       (debug "hook_handle_sigchld successful curchph=" 
+		      curchph)
+	       (curclos curchph ())
+	       )
+	     ( :else
+	       ;; failed exit
+	       (debug "hook_handle_sigchld failed curchph=" 
+		      curchph " exitstat=" exitstat)
+	       (curclos curchph 
+			(make_integerbox discr_constant_integer exitstat))
+	       )
+	     ))
+	   (signaled
+	    (debug "hook_handle_sigchld signaled curchph="
+		   curchph " termsigname=" termsigname)
+	    (curclos curchph termsigname))
+	   )))))))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defun register_child_process_handler (clos :long pid :value data)
+  :doc #{$REGISTER_CHILD_PROCESS_HANDLER is the low level function to
+  register a handler of closure $CLOS for termination of process $PID
+  with extra $DATA. The $CLOS would be applied to the returned child}#
+  (debug "register_child_process_handler clos=" clos " pid=" pid " data=" data)
+  (if (is_closure clos)
+      (if (>i pid 0)
+	  (let ( (:long pidisbad 0)
+		 )
+	    (code_chunk 
+	     trykillchk
+	     #{/* register_child_process_handler $TRYKILLCHK */
+	     if (kill ((pid_t) $PID, 0))
+	     $PIDISBAD = -1L		;
+	     }#)
+	    (debug "register_child_process_handler pidisbad=" pidisbad)
+	    (if pidisbad (return))
+	    (let ( (chph (instance 
+			  class_child_process_handler
+			  :chilproh_pid (make_integerbox discr_constant_integer pid)
+			  :chilproh_clos clos
+			  :chilproh_data data))
+		   )
+	      (debug "register_child_process_handler chph=" chph)
+	      (block_signals 
+	       () ()
+	       (let ( (buck (or melt_childbuck
+				(make_bucketlong discr_bucket_longs 13)))
+		     )
+		 (assert_msg "check buck" (is_bucketlong buck) buck)
+		 (setq buck (bucketlong_put buck pid chph))
+		 (setq melt_childbuck buck)
+		 )
+	       )
+	      (return chph)
+	    )))))
+
+
+
+(defun unregister_child_process_handler (chd)
+  :doc #{Unregister a child process handler obtained by $REGISTER_CHILD_PROCESS_HANDLER @b{**unimplemented**}}#
+  (debug "unregister_child_process_handler chd=" chd)
+  (assert_msg "@$@unimplemented unregister_child_process_handler")
+)
+
+(export_values 
+ register_alarm_timer
+ register_child_process_handler
+ register_input_channel_handler 
+ unregister_alarm_timer 
+ unregister_child_process_handler
+)
+;; eof warmelt-hooks.melt

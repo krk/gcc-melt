@@ -1,0 +1,49 @@
+; -*- lisp -*-
+;; file thookcall.melt
+
+#| run in buildir/gcc
+ ln -s $GCCMELT_SOURCE/gcc/testsuite/melt/thookcall.melt
+ ./cc1 -fmelt-mode=rundebug @meltbuild-common.args \
+    -fmelt-keep-temporary-files \
+    -fmelt-init=@warmelt.quicklybuilt \
+    -fmelt-arg=thookcall.melt \
+    -fmelt-debug meltbuild-empty-file.c
+|#
+
+(defhook hook_testcall (:value v) (:long l) :long
+  (debug "hook_testcall v=" v)
+  (setq l (+ 1 (* 3 (get_int v)) 5))
+  (return (+i 2 (get_int v))))
+
+(defun testcall_internal (u)
+  (debug "testcall_internal u=" u)
+  (let ( (:long ll 0)
+	 (res (box (hook_testcall (+ivi u 5) ll)))
+	 )
+    (debug "testcall_internal res=" res)
+    res
+  ))
+
+(defun testcall_outside ()
+  (debug "testcall_outside start")
+  (let ( (valuekw 
+	  (hook_named_keyword "VALUE" 0))
+	 )
+    (debug "testcall_outside valuekw=" valuekw)
+    valuekw))
+
+(debug "hook_testcall=" hook_testcall " hook_named_keyword=" hook_named_keyword)
+
+(debug "before testcall_internal")
+(debug "testcall_internal gives=" (testcall_internal '23))
+
+(debug "before testcall_outside")
+(debug "testcall_outside gives=" (testcall_outside))
+
+(debug "testing hook_named_keyword in exprchunk hook_named_keyword=" hook_named_keyword
+       " computed :long="
+       (expr_chunk hookeyw_chk :value ##{ /* $hookeyw_chk */
+		   melthookproc_HOOK_NAMED_KEYWORD ("LONG", (long)0)
+		   }#)
+       )
+;; eof thookcall.melt

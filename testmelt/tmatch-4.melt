@@ -1,0 +1,76 @@
+; -*- lisp -*-
+;; file tmatch-4.melt
+
+#| run in buildir/gcc, with tmatch-4.melt being a symbolic link to this file:
+
+ ./cc1 -fmelt=translatefile  -fmelt-module-path=. \
+ -fmelt-source-path=.:$GCCMELTSOURCE/gcc/melt \
+    -fmelt-tempdir=/tmp -fmelt-init=@warmelt2:xtramelt-ana-base \
+    -fmelt-option=match_graphic=/tmp/melt4graph,alternate_match \
+    -fmelt-arg=tmatch-4.melt -fmelt-debug empty-file-for-melt.c
+
+|#
+
+(defun simple4 (data f :tree t)
+  (match t
+;;;
+         ( ?(tree_integer_cst ?_)
+            (f data 1000))
+;;;
+	 (  ?(tree_var_decl_named "varname")
+	     (f data 1300))
+         )
+;;;
+         (  ?(tree_of_type
+                   ?(tree_var_decl 
+                     ?(cstring_same "needle"))
+              )
+             (f data 2000))
+;;;
+         (  ?(tree_of_type
+	      ?_)
+             (f data 2500))
+  )
+
+
+;; from makegreen_transform in melt/ana-simple.melt
+(defun tmatch4 (grdata f :gimple g)
+  (debug_msg grdata "tmatch4 start grdata")
+  ;;-  (debuggimple "tmatch4 before matching g" g) ;
+;;;;					;
+  (match g
+	 ;;				;
+	 (?(gimple_assign_cast 
+	    ?lhs
+	    ?rhs)
+;;;					;
+	   ;;-	   (debugtree "tmatch4 assign cast lhs" lhs) ;
+	   ;;-	   (debugtree "tmatch4 assign cast rhs" rhs) ;
+	   (f grdata 1 lhs rhs)
+	   )
+	 ;;				;
+	 (?(gimple_assign_single  
+	    ?lhs 
+	    ?(as ?rhs
+		 ?(tree_var_decl 
+		   ?(cstring_same "stdout"))))
+;;;					;
+	   ;;-	   (debugtree "tmatch4 assign single stdout lhs" lhs) ;
+	   ;;-	   (debugtree "tmatch4 assign single stdout rhs" rhs) ;
+	   (f grdata 2 lhs rhs)
+	   )
+	 ;;
+	  (?_
+	   ;;;
+;;-	   (debuggimple "tmatch4 unmatched g" g)
+	   (f grdata 0)
+	   )
+	  )
+  ;;;;;;;
+;;-  (debug_msg grdata "tmatch4 end grdata")
+  )
+
+(debug_msg tmatch4 "tmatch4")
+
+
+;; eof tmatch-4.melt

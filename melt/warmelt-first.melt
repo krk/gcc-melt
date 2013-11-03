@@ -1,0 +1,4914 @@
+; -*- Lisp -*-
+;; file warmelt-first.melt
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(comment "***
+    Copyright 2008 - 2013 Free Software Foundation, Inc.
+    Contributed by Basile Starynkevitch <basile@starynkevitch.net>
+
+    This file is part of GCC.
+
+    GCC is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 3, or (at your option)
+    any later version.
+
+    GCC is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with GCC; see the file COPYING3.  If not see
+    <http://www.gnu.org/licenses/>.
+***")
+
+;; the copyright notice above apply both to warmelt-first.melt and 
+;; to the generated files  warmelt-first*.c
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;;    This file is the first part of a bootstrapping compiler for the
+;;    MELT lisp dialect, compiler which should be able to
+;;    compile itself (into generated C file[s])
+;;    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; This warmelt-first.melt file is translated in translateinit mode
+;; when bootstrapping, so that MELT_HAS_INITIAL_ENVIRONMENT is 0 in
+;; that particular case. It should not contain any macro definition
+;; with defmacro or export_macro.
+
+(code_chunk warn_hasinit_chk #{
+#if MELT_HAS_INITIAL_ENVIRONMENT
+#error warmelt-first with MELT_HAS_INITIAL_ENVIRONMENT but should not
+#endif
+}#)
+
+
+;;; Avoid using debug_msg or debug here.  If needed, use the following
+(defprimitive melt_low_debug (:cstring msg :value val) :void
+  :doc #{Low level primitive for debugging, only useful in file
+  warmelt-first.melt only. Use $DEBUG instead.}#
+  #{/* melt_low_debug */ melt_low_debug_value($MSG,(melt_ptr_t)$VAL)}#
+  )
+
+
+;;****************************************************************
+;;       C L A S S E S 
+;;****************************************************************
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; ================ general classes
+
+;; root class
+(defclass class_root 
+  :predef CLASS_ROOT
+  :doc #{The $CLASS_ROOT is the topmost root of all classes. Every
+class should be some indirect subclass of $CLASS_ROOT. And $CLASS_ROOT
+should be the only class without superclass. Actually its super
+discriminant is $DISCR_ANY_RECEIVER.}# )
+
+;; arbitrary container as class
+(defclass class_reference
+  :super class_root
+  :predef CLASS_REFERENCE
+  :fields (referenced_value)
+  :doc #{The $CLASS_REFERENCE is a class for mutable references (incorrectly
+called containers). The contained value is $REFERENCED_VALUE. See also
+$REFERENCE and $DEREF macros.}#)
+
+;; class of everything with a property table
+(defclass class_proped 
+  :super class_root 
+  :fields (prop_table)
+  :predef CLASS_PROPED
+  :doc #{The $CLASS_PROPED is the common super-class for objects with a
+property table $PROP_TABLE (an object map associating property naming
+symbols to arbitrary value.}# )
+
+
+;; class of named objects
+(defclass class_named 
+  :super class_proped 
+  :fields (named_name) 
+  :predef CLASS_NAMED
+  :doc #{The $CLASS_NAMED is the super-class of every named object. The
+$NAMED_NAME field is conventionally a string.}# )
+
+;; class of discriminants
+(defclass class_discriminant 
+  :super class_named 
+  :fields (disc_methodict 
+	   disc_sender
+	   disc_super)
+  :predef CLASS_DISCRIMINANT
+  :doc #{The $CLASS_DISCRIMINANT is the class of every discriminant. It has the
+method dictionnary $DISC_METHODICT and the super-discriminant
+$DISC_SUPER. The $DISC_SENDER can hold a closure doing the send if the
+selector is not found. Otherwise, the default is to send thru the
+super-discriminant.}# )
+
+;; class of classes
+(defclass class_class
+  :super class_discriminant
+  :fields (class_ancestors class_fields class_data)
+  :doc #{The $CLASS_CLASS is the class of all classes - which are
+therefore discriminants.  The $CLASS_ANCESTORS field holds the
+sequence of ancestors. The $CLASS_FIELDS gives the sequence of
+inherited and own fields. The $CLASS_DATA is for class
+variables. Instances of $CLASS_CLASS are automagically created by the
+$DEFCLASS macro.}#
+  :predef CLASS_CLASS
+)
+
+;; class of fields
+(defclass class_field
+  ;; the fields' objnum is its offset
+  :super class_named
+  :fields (fld_ownclass fld_data)
+  :doc #{The $CLASS_FIELD is the class of every field. Its objnum is its
+offset. Its $FLD_OWNCLASS is the class owning that field. The
+$FLD_DATA is for additional data. Instances of $CLASS_FIELD are
+automagically created by the $DEFCLASS macro.}#
+  :predef CLASS_FIELD)
+
+;; class of primitive
+(defclass class_primitive
+  :super class_named
+  :fields (prim_formals prim_type prim_expansion)
+  :doc #{The $CLASS_PRIMITIVE is the class of descriptors of
+primitives. The $PRIM_FORMALS field is the sequence of formal
+arguments, the $PRIM_TYPE field is the type of the primitive, and its
+expansion is described by the $PRIM_EXPANSION tuple. Instances of
+$CLASS_PRIMITIVE are automagically created by the $DEFPRIMITIVE
+macro.}#
+  :predef CLASS_PRIMITIVE)
+
+;; class of C iterators
+(defclass class_citerator
+  :super class_named
+  :fields (citer_start_formals		;the formal start arguments
+	   citer_state			;the symbol representing the iterator state
+	   citer_body_formals 		;the formal body arguments
+	   citer_expbefore		;expansion before body
+	   citer_expafter		;expansion after body
+	   )
+  :doc #{The $CLASS_CITERATOR is the class describing c-iterators. The
+formal start arguments are in the $CITER_START_FORMALS field, the
+$CITER_STATE field gives the state symbol, the $CITER_BODY_FORMALS
+gives the formal body arguments, and the before and after expansions
+are $CITER_EXPBEFORE and $CITER_EXPAFTER. Instances of
+$CLASS_CITERATOR are automagically created by the $DEFCITERATOR
+macro.}#
+  :predef CLASS_CITERATOR)
+
+(defclass class_any_matcher
+  :super class_named
+  :fields (amatch_in		;the formal input arguments
+	   amatch_matchbind		;the matched formal binding
+	   amatch_out			;the formal output arguments
+	   )
+  :doc #{The $CLASS_ANY_MATCHER is the common super-class for matcher
+descriptors. The $AMATCH_IN gives the formal input arguments, the
+$AMATCH_MATCHBIND is the formal binding of the matched stuff, and
+$AMATCH_OUT is the formal output arguments. Instances of sub-classes
+of $CLASS_ANY_MATCHER are automagically created by macros like
+$DEFCMATCHER and $DEFUNMATCHER.}# )
+
+					; class of C matchers (in patterns)
+(defclass class_cmatcher
+  :super class_any_matcher
+  :fields (
+	   cmatch_state			;the symbol representing the match state
+	   cmatch_exptest		;expansion for test expr [in patterns]
+	   cmatch_expfill		;expansion for filling instr
+					;[in patterns]
+	   cmatch_expoper		;expansion for operator use
+					;[in expressions] using outs
+	   )
+  :doc #{The $CLASS_CMATCHER is the class for c-matcher
+descriptors. $CMATCH_STATE is the state symbol, $CMATCH_EXPTEST gives
+the expansion for testing in patterns, $CMATCH_EXPFILL is the
+expansion for filling a matched pattern. $CMATCH_EXPOPER is the
+expansion for operator uses. Instances of $CLASS_CMATCHER are
+automagically created by the $DEFCMATCHER macro.}#
+  :predef CLASS_CMATCHER)
+
+					; class of function matcher (in patterns)
+(defclass class_funmatcher
+  :super class_any_matcher
+  :fields (
+	   fmatch_matchf		;matching function
+	   ;; first argument to matching function is the funmatcher.
+	   ;; second argument is the stuff to match next arguments are input
+	   ;; primary result is non-nil iff the match succeeded. secondary results
+	   ;; are the deconstructed stuff
+	   fmatch_applyf		;applying function
+	   ;; first argument to applying function is the funmatcher.
+	   ;; next arguments are from the expression
+	   fmatch_data			;client data
+	   )
+  :doc #{The $CLASS_FUNMATCHER describes fun-matchers. $FMATCH_MATCHF is
+the matching function -for patterns. $FMATCH_APPLYF is the applying
+function -for expressions. $FMATCH_DATA is some additional client
+data. Instances of $CLASS_FUNMATCHER are automagically created by the
+$DEFUNMATCHER macro.}#
+  :predef CLASS_FUNMATCHER
+  )
+
+;; class of located stuff
+(defclass class_located
+  :super class_proped
+  :fields (loca_location)
+  :doc #{The $CLASS_LOCATED is the super-class for located stuff,
+  having a source file location given by the $LOCA_LOCATION field,
+  conventionally a mixed location box with $DISCR_MIXED_LOCATION.}#
+  :predef CLASS_LOCATED)
+
+;; class of source expressions
+(defclass class_sexpr
+  :predef CLASS_SEXPR
+  :super class_located
+  :fields (sexp_contents		;list of contents
+	   )
+  :doc #{The $CLASS_SEXPR is the class of source expressions, as
+parsed by the reader before their macro expansion into abstract syntax
+tree [see $CLASS_SOURCE]. The $SEXP_CONTENTS field is a list of
+contents.}# )
+
+;; subclass of source expressions for macrostrings
+(defclass class_sexpr_macrostring
+  :predef CLASS_SEXPR_MACROSTRING
+  :super class_sexpr
+  :fields ()
+  :doc #{The $CLASS_SEXPR_MACROSTRING has the same fields as
+$CLASS_SEXPR but is used for macrostring s-expressions, written in
+MELT source with the #$.@{ #$.@} notation.}# )
+
+
+
+;; class of message selectors
+(defclass class_selector
+  :super class_named
+  :fields (sel_signature sel_data)
+  :doc #{The $CLASS_SELECTOR is the class of message selectors, created by
+the $DEFSELECTOR macro. The $SEL_SIGNATURE could give a signature (as
+a formal argument list) and the $SEL_DATA is for additional data.}#
+  :predef CLASS_SELECTOR)
+
+
+;; class of symbols
+(defclass class_symbol
+  :predef CLASS_SYMBOL
+  :super class_named
+  :doc #{The $CLASS_SYMBOL is the class of symbols. The $SYMB_DATA is
+  a field for some additional data. The reader may create instances of
+  $CLASS_SYMBOL when encoutering new symbols. Symbols are interned
+  inside the $INITIAL_SYSTEM_DATA.}#
+  :fields (symb_data))
+
+;; class of generated (ie cloned) symbols - like lisp gensym-ed
+(defclass class_cloned_symbol
+  :super class_symbol
+  :fields (csym_urank			;unique rank as a boxed integer
+	   )
+  :doc #{The $CLASS_CLONED_SYMBOL is the sub-class of cloned symbols,
+e.g. like GENSYM-ed symbols is many Lisps.  Cloned symbols are
+internally generated inside the MELT translator by the $CLONE_SYMBOL
+function. Their $CSYM_URANK field gives their unique rank as a boxed
+integer. Cloned symbols are not interned.}#)
+
+;; class of keyword symbols
+(defclass class_keyword
+  :predef CLASS_KEYWORD
+  :super class_symbol
+  :doc #{The $CLASS_KEYWORD is the sub-class of keywords, that is
+symbols starting with a colon, which are handled specially and
+implicitly quoted. Most ctypes are denoted by such keywords
+like @code{:long :value} etc. The reader parses as keyword any symbol
+starting with a colon. Keywords are interned inside the
+$INITIAL_SYSTEM_DATA.}#
+  :fields ())
+
+;; singleton class of quasi-ctype, only useful for :auto; all other
+;; ctypes are instances of class_ctype which is a subclass of
+;; class_quasi_ctype
+
+(defclass class_quasi_ctype
+  :super class_named
+  :fields (
+	   ctype_keyword ;the keyword associated to the ctype (e.g. :long)
+	   ctype_descr	  ;descriptive string
+	   )
+  :doc #{The $CLASS_QUASI_CTYPE is only for the :auto ctype
+  annotation and :macro annotation. but the $CLASS_CTYPE is its
+  subclass. $CTYPE_KEYWORD gives the MELT keyword symbol associated to
+  it. $CTYPE_DESCR gives a descriptive string.}#)
+
+(definstance quasi_ctype_auto class_quasi_ctype
+  :doc #{the $QUASI_CTYPE_AUTO is for :auto annotations}#
+  :named_name '"QUASI_CTYPE_AUTO"
+  :ctype_keyword ':auto
+)
+(put_fields ':auto :symb_data quasi_ctype_auto)
+
+(definstance quasi_ctype_macro class_quasi_ctype
+  :doc #{the $QUASI_CTYPE_MACRO is for :macro annotations}#
+  :named_name '"QUASI_CTYPE_MACRO"
+  :ctype_keyword ':macro
+)
+(put_fields ':macro :symb_data quasi_ctype_macro)
+
+;; class of C types keywords - it is predefined to ensure
+;; install_ctype_descr always refer to the same class
+(defclass class_ctype
+  :predef CLASS_CTYPE
+  :super class_quasi_ctype
+  :fields (
+	   ctype_cname	 ;the name for C of the type (eg long)
+	   ctype_parchar ;the name of the melt parameter char (eg MELTBPAR_LONG)
+	   ctype_parstring ;the name of the melt parameter string (eg MELTBPARSTR_LONG)
+	   ctype_argfield ;the name of the melt argument union field (eg meltbp_long)
+	   ctype_resfield ;the name of the melt result union field (eg meltbp_longptr)
+	   ctype_marker	  ;the name of the marker routine
+	   ctype_altkeyword ;the alternate keyword associated to the ctype (e.g. :longinteger)
+	   ctype_autoboxdiscr		;discriminant for auto-boxing or nil
+	   ctype_autoconstboxdiscr 	;discriminant for const
+					;auto-boxing or nil
+	   )
+  :doc #{The $CLASS_CTYPE is for predefined descriptors of C
+types (like long or tree). $CTYPE_KEYWORD gives the associated
+keywords (for formal argument lists, etc...), $CTYPE_CNAME gives the C
+identifier of the type. Parameter passing is described by
+$CTYPE_PARCHAR (for the character) and $CTYPE_PARSTRING (for the
+corresponding C string). Argument member in union is given by
+$CTYPE_ARGFIELD, and by $CTYPE_RESFIELD for results.  The marking
+routine is $CTYPE_MARKER and $CTYPE_DESCR is some descriptive string
+or data. A possible alternate keyword is given by $CTYPE_ALTKEYWORD.
+The $CTYPE_AUTOBOXDISCR gives the discriminant for autoboxing or nil,
+and the $CTYPE_AUTOCONSTBOXDISCR gives the discriminant for const
+autoboxinf oe nil.  Adding new c-types requires an update of MELT
+runtime!}# )
+
+;;; the class describing plain ctypes, i.e. not GTY-ed, like :cstring or :long
+(defclass class_ctype_plain
+  :predef CLASS_CTYPE_PLAIN
+  :super class_ctype
+  :fields (
+	   ctypp_boxing ;the boxing name
+	   ctypp_unboxing ;the unboxing name
+	   )
+  :doc #{The $CLASS_CTYPE_PLAIN is for predefined descriptors of plain
+  c-types which are not GTY-ed so need a boxing and unboxing
+  chunk. The $CTYPP_BOXING is the name of a C function or macro
+  getting the discriminant and the stuff and boxing them. The
+  $CTYPP_UNBOXING is the name of a C function or macro unboxing its value.}# )
+
+;;; the class describing ctype which are GTY-ed, like tree-s
+(defclass class_ctype_gty
+  :predef CLASS_CTYPE_GTY
+  :super class_ctype
+  :fields (
+;;; obmag are object magic like MELTOBMAG_INT inside melt-runtime.h
+	   ctypg_boxedmagic		;MELT obmag for boxed values
+	   ctypg_mapmagic		;MELT obmag for magic values
+;;; structnames are C struct like meltint_st for boxed
+	   ctypg_boxedstruct		;struct name for boxed values
+	   ctypg_boxedunimemb		;union member name for boxed values
+	   ctypg_entrystruct 		;struct name for hash entry
+	   ctypg_mapstruct 		;struct name map values
+	   ctypg_mapdiscr		;discriminant for map values
+	   ctypg_mapunimemb		;union member name for map values
+	   ctypg_boxfun			;name of boxing function
+	   ctypg_unboxfun		;name of content unboxing function
+	   ctypg_updateboxfun		;name of box updating function
+	   ctypg_newmapfun		;name of map creating function
+	   ctypg_mapgetfun		;name of map getting function
+	   ctypg_mapputfun		;name of map putting function
+	   ctypg_mapremovefun		;name of map removing function
+	   ctypg_mapcountfun		;name of map counting function
+	   ctypg_mapsizefun		;name of map size function
+	   ctypg_mapnattfun		;name of map nth attr function
+	   ctypg_mapnvalfun		;name of map nth value function 
+	   ctypg_mapauxdatafun		;name of map auxiliary data retrieval function
+	   ctypg_mapauxputfun		;name of map auxiliary data put function
+
+	   )
+  :doc #{The $CLASS_CTYPE_GTY is a subclass of $CLASS_CTYPE and
+describes C types which are GTY-ed, that is handled by the Ggc [the
+existing Gcc Garbage Collector].}#
+)
+
+
+
+;; class of system data 
+(defclass class_system_data
+  :predef CLASS_SYSTEM_DATA
+  :super class_named
+  :doc #{The $CLASS_SYSTEM_DATA has a singleton instance, the
+$INITIAL_SYSTEM_DATA. It contains lots of fields, starting by
+SYSDATA_, for various system facilities.  It is very magical, and
+should be kept in sync with the MELT runtime.  Only for gurus! So
+don't instanciate this class!}#
+  :fields (sysdata_mode_dict			;stringmap for commands
+	   sysdata_symboldict 		; stringmap for symbols
+	   sysdata_keywdict 		;stringmap for keywords
+	   sysdata_pass_dict		;stringmap for passes
+	   sysdata_debugmsg		;closure for debugmsg
+	   sysdata_stdout		;raw file for stdout
+	   sysdata_stderr		;raw file for stderr
+	   sysdata_dumpfile		;raw file for dump_file
+	   sysdata_option_set 		;closure to set a MELT option	
+	   sysdata_meltpragmas		;a list or tuple of pragma
+					;descriptor object of
+					;CLASS_GCC_PRAGMA
+	   ;;
+	   ;; dictionnary to associate to location an interned file path string
+	   sysdata_src_loc_file_dict
+	   ;;
+	   ;;;keep these spare slots to ease the addition of other slots
+	   sysdata___spare1
+	   sysdata___spare2
+	   sysdata___spare3
+	   sysdata___spare4
+	   ))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; ================ classes for environments & bindings
+
+;;;; the class for environments - predefined to ensure all
+;;;; environments have the same (super*)class
+(defclass class_environment
+  :predef CLASS_ENVIRONMENT
+  :super class_root
+  :doc #{The $CLASS_ENVIRONMENT reifies environments. The binding map
+is $ENV_BIND, the previous environment is $ENV_PREV, and the procedure
+if any of this environment is $ENV_PROC. It is heavily used within the
+MELT translator. Module initialization produces fresh instances of
+it. See the $CURRENT_MODULE_ENVIRONMENT_REFERENCE and
+$PARENT_MODULE_ENVIRONMENT macros.}#
+  :fields (env_bind			;the map of bindings
+	   env_prev			;the previous environment
+	   env_proc			;the procedure of this environment
+	   ))
+
+(defclass class_described_environment
+  :super class_environment
+  :fields (denv_descr
+	   )
+  :doc #{The $CLASS_DESCRIBED_ENVIRONMENT provides an extra descriptor
+$DENV_DESCR which can for example be a descriptive string.}#)
+
+;; the (super-)class of any binding
+(defclass class_any_binding
+  :super class_root
+  :fields (binder)
+  :doc #{The $CLASS_ANY_BINDING is the super-class of every
+  binding. The $BINDER field is the bound name. Bindings are added by
+  module initializers. Don't create bindings by instanciating this
+  class in user code, they are created within the Melt translator.}# )
+
+;;; superclass of exported bindings
+(defclass class_exported_binding
+  :super class_any_binding
+  :fields ( )
+  :doc #{The $CLASS_EXPORTED_BINDING is the super-class of exported bindings.}#
+  )
+
+;; macro binding
+(defclass class_macro_binding
+  :super class_exported_binding
+  :fields (mbind_expanser)
+  :doc #{The $CLASS_MACRO_BINDING is the class of exported or defined macro
+bindings. See the $EXPORT_MACRO and $DEFMACRO macros.}# )
+
+;; pattern macro binding
+(defclass class_patmacro_binding
+  :super class_macro_binding
+  :fields (patbind_expanser)
+  :doc #{The $CLASS_PATMACRO_BINDING is the class of exported
+pattern-macro bindings. See the $EXPORT_PATMACRO macro.}# ) 
+
+;; value binding - as exported 
+(defclass class_value_binding
+  :super class_exported_binding
+  :fields (vbind_value)
+  :doc #{The $CLASS_PATMACRO_BINDING is the class of exported value bindings.
+See The $EXPORT_VALUES macro.}#
+)
+
+;;; formal binding (used in generated defprimitive)
+(defclass class_formal_binding
+  :super class_any_binding
+  :fields (fbind_type)
+  ;;the obj_num is the argument rank
+  :predef CLASS_FORMAL_BINDING
+  :doc #{The $CLASS_FORMAL_BINDING is the class of formal argument
+bindings [like in @code{defun lambda defprimitive defciterator}
+etc..]. The $FBIND_TYPE gives the formal's c-type. The object's number
+is the argument rank.}# )
+
+
+;;; fixed bindings are defined in a compilation unit and can be
+;;; implemented as constants in routine
+(defclass class_fixed_binding
+  :super class_any_binding
+  :fields (fixbind_data			;the common slot describing data
+	   )
+  :doc #{The internal $CLASS_FIXED_BINDING is a super-class of bindings
+  inside a compilation unit. The data description is inside
+  $FIXBIND_DATA. Fixed bindings are internal to the translator.}#)
+
+
+;; selector binding
+(defclass class_selector_binding
+  :super class_fixed_binding
+  :fields (sbind_selectordef 		;the "source" defselector
+	   ;; maybe we need an selectorval for the actual value
+	   )
+  :doc #{The internal $CLASS_SELECTOR_BINDING is a fixed binding for
+  selectors. See $DEFSELECTOR macro. The $SBIND_SELECTORDEF gives the
+  definition.}# )
+
+;; primitive binding
+(defclass class_primitive_binding
+  :super class_fixed_binding
+  :fields (pbind_primdef		;the source defprimitive
+	   pbind_primitive		;the primitive proper
+	   )
+  :doc #{The internal $CLASS_PRIMITIVE_BINDING is for primitive
+bindings. See $DEFPRIMITIVE macro. The $PBIND_PRIMDEF gives the
+definition, and the $PBIND_PRIMITIVE gives the primitive itself.}# )
+
+;; citerator binding
+(defclass class_citerator_binding
+  :super class_fixed_binding
+  :fields (cbind_citerdef		;the source defciterator
+	   cbind_citerator		;the citerator proper
+	   )
+  :doc #{The internal $CLASS_CITERATOR_BINDING is for c-iterator
+  bindings. See the $DEFCITERATOR macro. The $CBIND_CITERDEF gives the
+  definition, and the $CBIND_CITERATOR provides the c-iterator itself.}#
+)
+
+
+;; function binding
+(defclass class_function_binding
+  :super class_fixed_binding
+  :fields (fubind_defun ;the source definition
+	   )
+  :doc #{The internal $CLASS_FUNCTION_BINDING is for function
+bindings. See the $DEFUN macro. The $FUBIND_DEFUN provides the
+definition.}# 
+)
+
+
+;; variable binding
+(defclass class_variable_binding
+  :super class_fixed_binding
+  :fields ()
+  :doc #{The internal $CLASS_VARIABLE_BINDING is for module variable
+bindings. See the $DEFVAR macro.}# 
+)
+
+
+;; hook binding
+(defclass class_hook_binding
+  :super class_fixed_binding
+  :fields (hookbind_defhook ;the source definition
+	   hookbind_descr    ;the descriptor
+	   )
+  :doc #{The internal $CLASS_HOOK_BINDING is for hook
+bindings. See the $DEFHOOK macro. The $HOOKBIND_DEFHOOK provides the
+definition.}# 
+)
+
+
+(defclass class_hook_descriptor
+  :super class_named
+  :fields (hookdesc_in_formals
+	   hookdesc_out_formals
+	   hookdesc_ctype
+	   hookdesc_hook
+	   )
+  :doc #{The $CLASS_HOOK_DESCRIPTOR describes the hook
+  interface. $NAMED_NAME is the hook name. $HOOKDESC_IN_FORMALS is the
+  tuple of input formal bindings. $HOOKDESC_OUT_FORMALS is the tuple
+  of output formal bindings. $HOOKDESC_CTYPE is the ctype of the
+  result. $HOOKDESC_HOOK is the described hook.}#
+  :predef CLASS_HOOK_DESCRIPTOR
+)
+
+
+;; define-d value binding
+(defclass class_defined_value_binding
+  :super class_fixed_binding
+  :fields (defvalbind_define ; the source definition
+	    )
+  :doc #{The internal $CLASS_DEFINED_VALUE_BINDING is for defined
+values thru the $DEFINE macro. $DEFVALBIND_DEFINE provides the
+definition. $FIXBIND_DATA gives a symbol occurrence in that case.}# )
+
+;; class binding
+(defclass class_class_binding
+  :super class_fixed_binding
+  :fields (cbind_defclass ;the source definition
+	   cbind_class			;the built class
+	   )
+  :doc #{The internal $CLASS_CLASS_BINDING is for class bindings. See
+the $DEFCLASS macro. The definition is provided by $CBIND_DEFCLASS,
+and the class itself is given by $CBIND_CLASS. A class definition also
+define fields.}#  )
+
+;; field binding
+(defclass class_field_binding
+  :super class_fixed_binding
+  :fields (flbind_clabind		;the class binding
+	   flbind_field			;the field proper
+	   )
+  :doc #{The internal $CLASS_FIELD_BINDING is for field bindings. See
+the $DEFCLASS macro. The class binding is $FLBIND_CLABIND, and the
+defined field is $FLBIND_FIELD.}# )
+
+;; instance binding
+(defclass class_instance_binding
+  :super class_fixed_binding
+  :fields ( ibind_iclass		;the instance's class
+	    )
+  :doc #{The internal $CLASS_INSTANCE_BINDING is for instance
+bindings. See the $DEFINSTANCE macro. The instance's class is in
+$IBIND_ICLASS.}#  )
+
+;; cmatcher binding
+(defclass class_cmatcher_binding
+  :super class_fixed_binding
+  :fields (cmbind_matcher		;the cmatcher
+	   )
+  :doc #{The internal $CLASS_CMATCHER_BINDING is for c-matcher
+bindings. See the $DEFCMATCHER macro. The c-matcher is in
+$CMBIND_MATCHER.}# )
+
+
+;; funmatcher binding
+(defclass class_funmatcher_binding
+  :super class_fixed_binding
+  :fields (fmbind_funmatcher		;the funmatcher (of class_funmatcher)
+	   fmbind_defunmatcher		;the source definition
+	   )
+  :doc #{The internal $CLASS_FUNMATCHER_BINDING is for funmatcher
+bindings. See the $DEFUNMATCHER macro. The funmatcher is in
+$FMBIND_FUNMATCHER and its definition in $FMBIND_DEFUNMATCHER.}#)
+
+;; let binding
+(defclass class_let_binding
+  :super class_any_binding
+  :fields (letbind_type			;the ctype 
+	   letbind_expr			;the expression
+	   letbind_loc			;the optional src location
+	   )
+  :doc #{The internal $CLASS_LET_BINDING is for internal let
+  bindings. See The $LET macro and also the
+  $CLASS_NORMAL_LET_BINDING. The c-type of the bound valus is
+  $LETBIND_TYPE, the expression is $LETBIND_EXPR, the source location
+  if any is $LEBIND_LOC.}# )
+
+;; letrec binding
+(defclass class_letrec_binding
+  :doc #{The internal $CLASS_LETREC_BINDING is for internal letrec
+  bindings. See the $LETREC macro. The bound expression should be
+  recursively constructible (like $LAMBDA $TUPLE $LIST $INSTANCE
+  ...)}#
+  :super class_let_binding
+  :fields ())
+
+;; normalized let binding
+(defclass class_normal_let_binding
+  :super class_let_binding
+  :fields  ()
+  :doc #{The internal $CLASS_NORMAL_LET_BINDING is for internal
+normalized bindings. The bound expression is in normal form. Very
+often the $BINDER is a cloned symbol.}# 
+) ;no additional field, but letbind_expr is "normal"
+
+;; label binding
+(defclass class_label_binding
+  :super class_any_binding
+  :fields (labind_loc			;location of the label
+;;; following fields are filled later in the compilation phase
+	   labind_clonsy		;unique cloned symbol
+	   labind_res			;result localvar
+	   )
+  :doc #{The internal $CLASS_LABEL_BINDING is for labels. See The
+$FOREVER and $EXIT macros. The label source location is $LABIND_LOC,
+the cloned symbol unique to the label is $LABIND_CLONSY. The local
+variables for the result is $LABIND_RES.}# )
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; ================ GCC pragmas
+;;;@@@@ for Pierre Vittet
+(defclass class_gcc_pragma
+  :predef CLASS_GCC_PRAGMA
+  :super class_named
+  ;; keep the fields list in sync with melt-runtime.h FGCCPRAGMA_*
+  :fields (gccpragma_handler            ;the closure to handle the pragma
+           gccpragma_data               ;extra data
+           )
+  :doc #{The $CLASS_GCC_PRAGMA is for objects describing GCC pragmas,
+  as provided by MELT code. Once correctly instanciated, such a pragma
+  descriptor should be registered thru the $INSTALL_MELT_GCC_PRAGMA
+  primitive.  MELT pragmas are named, and all belong to the same MELT
+  pragma namespace.  C code using them will use: #pragma MELT name ...
+  and the name there is the string given by the $NAMED_NAME field of
+  the pragma descriptor.}#)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; ================ GCC compiler passes
+(defclass class_gcc_pass
+  :predef CLASS_GCC_PASS
+  :super class_named
+  ;; keep the fields list in sync with melt-runtime.h FGCCPASS_*
+  :fields (gccpass_gate			;closure for gate
+	   gccpass_exec			;closure for execution
+	   gccpass_data			;extra data
+	   ;;;; the following fields are mimicking their equivalent in
+	   ;;;; struct opt_pass of gcc/tree-pass.h
+	   ;;;;;; if it is a boxed integer, get the integer
+	   ;;;;;; if it is a string or a named, translate it
+	   ;;;;;; if it is a list or a tuple, make an OR mask of them
+	   gccpass_properties_required 
+	   gccpass_properties_provided
+	   gccpass_properties_destroyed
+	   gccpass_todo_flags_start
+	   gccpass_todo_flags_finish
+	   )
+  :doc #{ The $CLASS_GCC_PASS is the super-class of GCC compiler
+passes descriptors, as provided in MELT. Once correctly instanciated,
+such a pass descriptor should be registered thru the
+$INSTALL_MELT_GCC_PASS primitive. Pass descriptors are named (be
+careful to give a unique unused name!). The $GCCPASS_GATE is the pass
+gate function. The $GCCPASS_EXEC is the pass execution function. The
+field $GCCPASS_DATA can be used for client data. The fields
+$GCCPASS_PROPERTIES_REQUIRED $GCCPASS_PROPERTIES_PROVIDED
+$GCCPASS_PROPERTIES_DESTROYED $GCCPASS_TODO_FLAGS_START
+$GCCPASS_TODO_FLAGS_FINISH are like their counterparts in C, and can
+be a boxed integer, a string or named [i.e. symbol], or a tuple or
+list of them.}# )
+
+(defclass class_gcc_gimple_pass
+  :predef CLASS_GCC_GIMPLE_PASS
+  :super class_gcc_pass
+  :fields ( )
+  :doc #{ The $CLASS_GCC_GIMPLE_PASS is for GCC gimple pass descriptors. }# 
+)
+
+(defclass class_gcc_rtl_pass
+  :predef CLASS_GCC_RTL_PASS
+  :super class_gcc_pass
+  :fields ( )
+  :doc #{ The $CLASS_GCC_RTL_PASS is for GCC RTL pass descriptors. }# 
+  
+)
+
+(defclass class_gcc_any_ipa_pass
+  :super class_gcc_pass
+  :fields ()
+  :doc #{  The $CLASS_GCC_ANY_IPA_PASS is the common class for every GCC 
+inter procedural analysis [IPA] pass descriptors. }#)
+
+(defclass class_gcc_simple_ipa_pass
+  :predef CLASS_GCC_SIMPLE_IPA_PASS
+  :super class_gcc_any_ipa_pass
+  :fields ( )
+  :doc #{ The $CLASS_GCC_SIMPLE_IPA_PASS is for GCC simple IPA pass
+descriptors. }# )
+
+(defclass class_gcc_transform_ipa_pass
+  :predef CLASS_GCC_TRANSFORM_IPA_PASS
+  :super class_gcc_any_ipa_pass
+  ;; keep the fields list in sync with melt-runtime.h FGCCTRIPAPASS_*
+  :fields ( gcctripapass_stmt_fixup
+	    gcctripapass_function_transform
+	    gcctripapass_variable_transform )
+  :doc #{ The $CLASS_GCC_TRANSFORM_IPA_PASS is for GCC full IPA pass
+descriptors which don't read or write any LTO information but are
+plain transforming IPA passes. }#)
+
+;;;; mode 
+(defclass class_melt_mode
+  :super class_named
+  :predef CLASS_MELT_MODE
+  :fields (meltmode_help
+	   meltmode_fun
+	   meltmode_data
+	   )
+  :doc #{ The $CLASS_MELT_MODE describe mode handlers, as given by the
+@code{-fmelt=} or @code{-fplugin-arg-melt-mode=} GCC program flag. The
+$MELTMODE_HELP is a help string. The $MELTMODE_FUN is the function to
+run the command, and the $MELTMODE_DATA gives additional client
+data. See the $INSTALL_MELT_MODE function. }# )
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; handling of SIGIO-signalable  input channels
+;; using a variable for a bucket of such instances.  See
+;; ahndling of SIGIO in warmelt-hooks.melt
+(defclass class_input_channel_handler 
+  :doc #{Internal class for input channel handling. Its magic number
+  is the file descriptor. $INCH_SBUF is the @b{read-only}
+  string-buffer for the input, $INCH_CLOS is a closure, and $INCH_DATA
+  is some client data. See also $REGISTER_INPUT_CHANNEL_HANDLER. Use
+  carefully, and don't mutate it. All fields should be considered
+  read-only from application code, which is only permitted to use
+  $INCH_DATA and mutate it.}#
+  :predef CLASS_INPUT_CHANNEL_HANDLER
+  :super class_proped
+  :fields (inch_sbuf			;the string buffer for input
+	   inch_clos			;the closure to handle it
+	   inch_data			;client data
+	   ))
+	   
+(defclass class_alarm_handler
+  :doc #{Internal class for alarm handling. $ALARMH_PERIOD is the
+  boxed period in milliseconds, $ALARMH_CLOS is the closure to be
+  called, $ALARMH_DATA is the client data. See $REGISTER_ALARM_TIMER and }#
+  :predef CLASS_ALARM_HANDLER
+  :super class_proped
+  :fields (
+	   alarmh_period
+	   alarmh_clos
+	   alarmh_data
+	   ))
+
+(defclass class_child_process_handler
+  :doc #{Internal class for child process handling. $CHILPROH_PID is
+  the boxed pid, $CHILPROH_CLOS is the boxed closure, $CHILPROH_DATA
+  is the client data.}#
+  :predef CLASS_CHILD_PROCESS_HANDLER
+  :super class_proped
+  :fields (
+	   chilproh_pid
+	   chilproh_clos
+	   chilproh_data
+))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; ================  source program elements
+
+;; common superclass of source abstract syntax tree elements
+(defclass class_source 
+  :super class_located
+  :fields ( 
+	  )
+  :doc #{The $CLASS_SOURCE is the common super-class of source elements,
+i.e. of abstract syntax tree elements after macro-expansion. Its
+subclasses are produced by macro expanders.}# )
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; module compilation context
+(defclass class_any_module_context
+  :super class_proped
+  :fields (mocx_modulename		;the module name
+	   mocx_expfieldict		;dict of exported fields
+	   mocx_expclassdict		;dict of exported classes
+	   mocx_initialenv		;the initial environment
+	   mocx_macroenv		;the macro environment
+	   mocx_funcount		;a boxed counter for defined functions
+	   mocx_filetuple		;vector for different generated files
+	   mocx_cflags			;cflags of generated module
+	   mocx_linkflags		;linkflags of generated module
+	   mocx_cheaderlist		;list of cheaders
+	   mocx_cimplementlist		;list of cimplements
+	   mocx_startcomment		;the starting comment if any
+	   mocx_gendevlist		;list of generator devices
+	   mocx_packagepclist		;list of pkg-config package string names
+	   mocx_errorhandler		;closure to be called on errors
+	   mocx_varcount		;a boxed counter for defined variables
+	   mocx_varlist			;list of module variables bindings
+	   mocx_hookdict		;dictionnary of called hooks descriptors
+	   mocx_macrolist		;list of macros
+	   )
+  :doc #{The internal $CLASS_ANY_MODULE_CONTEXT describes the whole
+module or extension context of a translation. $MOCX_MODULENAME gives
+the module name, $MOCX_EXPFIELDICT gives the dictionnary of exported
+fields, $MOCX_EXPCLASSDICT gives the dictionnary of exported classes,
+and $MOCX_INITIALENV the initial environment. $MOCX_MACROENV is the
+environment for macros. $MOCX_FUNCOUNT is a boxed integer counting the
+defined functions (excluding $LAMBDA-s, counting only $DEFUN), used to
+help generate C code in several files, described in
+$MOCX_FILETUPLE. $MOCX_CFLAGS is for the C compilation flags of the
+module. $MOCX_LINKFLAGS is for the linking flags. $MOCX_CHEADERLIST is
+the list of cheaders. $MOCX_CIMPLEMENTLIST is the list of
+cimplements. $MOCX_STARTCOMMENT is the initial comment.
+$MOCX_GENDEVLIST is the list of instances of
+$CLASS_SOURCE_GENERATOR_DEVICE. $MOCX_ERRORHANDLER is the closure, if
+any, to call on errors. $MOCX_VARCOUNT is the counter for
+variables. $MOCX_VARLIST contains the list of variable
+descriptions. $MOCX_MACROLIST is the list of not-yet-compiled
+macros. For gurus!}# )
+
+(defclass class_module_context
+  :super class_any_module_context
+  :fields (
+	  ))
+
+(defclass class_running_extension_module_context
+  :super class_any_module_context
+  :fields (morcx_litervalist
+	   morcx_literobjmap
+	   morcx_countlitval
+	   )
+  :doc #{The $CLASS_RUNNING_EXTENSION_MODULE_CONTEXT is for runtime
+evaluation of expressions. Field $MORCX_LITERVALIST is the list of
+literal values of $CLASS_LITERAL_VALUE, with $MORCX_LITEROBJMAP used to literal
+objects. $MORCX_COUNTLITVAL is the literal value counter.}# )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; normalization context
+(defclass class_normalization_context
+  :super class_proped
+  :fields (nctx_initproc		;initial procedure
+	   nctx_proclist		;list of procedures
+	   nctx_datalist		;list of data
+	   nctx_valuelist		;list of imported values
+	   nctx_symbmap			;stringmap of name to interned symbols
+	   nctx_keywmap			;stringmap of name to interned keywords
+	   nctx_symbcachemap		;objmap of cached symbol -> occurrence
+	   nctx_predefmap		;objmap of predef -> boxedrank or symbols
+	   nctx_valmap			;objmap of values -> data 
+	   nctx_valbindmap 		;objmap of value binding -> data
+	   nctx_curproc			;current procedure
+	   nctx_modulcontext		;the module compilation context
+	   nctx_qdatcurmodenvbox ;quasi data for current_module_environment_reference
+	   nctx_qdatparmodenv		;quasi data for parent_module_environment
+	   nctx_procurmodenvlist	;list of procedures using the current_module_environment_reference construct
+	   )
+  :doc #{The internal $CLASS_NORMALIZATION_CONTEXT (for gurus only) is used for
+expression normalization by the translator. $NCTX_INITPROC gives the
+initial procedure. $NCTX_PROCLIST is the list of
+procedures. $NCTX_DATALIST is the list of data. $NCTX_VALUELIST gives
+the list of imported values. $NCTX_SYMBMAP and $NCTX_KEYWMAP are
+dictionnaries mapping symbol or keyword names to interned symbols or
+keywords. $NCTX_SYMBCACHEMAP is an object map to cache the occurrence
+of symbols. $NCTX_PREDEFMAP is a map from predefined to
+ranks. $NCTX_VALMAP is an object map from value to data, and
+$NCTX_VALBINDMAP is an object map from value binding to data. The
+Current procedure is $NCTX_CURPROC. The module compilation context is
+$NCTX_MODULCONTEXT. The quasidata for the current module environment
+container is $NCTX_QDATCURMODENVBOX. The quasi data for the parent
+module's environment is $NCTX_QDATPARMODENV. The list of procedures
+using the current module environment is in $NCTX_PROCURMODENVLIST.}# )
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; ================ classes for code generation
+
+
+;;; code generation context
+(defclass class_c_generation_context
+  :super class_root
+  :fields ( gncx_objrout 		;the containing object routine
+	    gncx_locmap			;objmap from normal bindings to locals
+	    gncx_freeptrlist		;list of freed local pointers
+	    gncx_freelonglist		;list of freed local longs
+	    gncx_freeothermaps		;map keyed by ctypes of list of freed local others
+	    gncx_retloc			;return location
+	    gncx_compicache		;cache map of procedure to compiled routines
+	    gncx_modulcontext		;the module compilation context
+	    ;; for the "old" match translation
+	    gncx_matchmap		;map keyed by normal matchers
+					;giving a unique label prefix
+	    ;; for the new alternate match translation
+	    gncx_altmatch
+	    ;;
+	    )
+  :doc #{The internal $CLASS_C_GENERATION_CONTEXT (for gurus) is the class of
+contexts for C code generation, while generating a single C
+routine. The containing object routine is $GNCX_OBJROUT. The object
+map from normal bindings to local is given in $GNCX_LOCMAP. The list
+of freed local value pointers is in $GNCX_FREEPTRLIST. The list of
+free longs is in $GNCX_FREELONGLIST. For other c-types, each c-type
+has its list, associated to it in $GNCX_FREEOTHERMAPS. The return
+location is in $GNCX_RETLOC. The cached map of procedures to compiled
+routines is in $GNCX_COMPICACHE. The module compilation context is in
+$GNCX_MODULCONTEXT. A map keyed by normal matchers to give a unique
+label prefix is in $GNCX_MATCHMAP.}# )
+
+
+;; code generation context for initial routine in modules
+(defclass class_initial_generation_context
+  :super class_c_generation_context
+  :fields (igncx_prevenvloc	    ;stack local for previous environment [parent_module_environment]
+	   igncx_contenvloc	    ;stack local for the container of environment
+	   igncx_procurmodenvlist   ;list of routines using the current_module_environment_reference
+	   igncx_importmap	    ;mapping of imported symbols to locvars
+	   )
+  :doc #{The internal $CLASS_INITIAL_GENERATION_CONTEXT (for gurus) is used when
+generating the initial routine of a module, which builds the current
+environment and evaluates the module toplevel expressions. The
+$IGNCX_PREVENVLOC is the local stack slot for the parent environment. The
+$IGNCX_CONTENVLOC is the local for the container of the current
+module's environment. The list of routines using it is in
+$IGNCX_PROCURMODENVLIST. The mapping of imported symbolts to locals is
+$IGNCX_IMPORTMAP.}# )
+
+;; code generation context for initial routine in runtime-evaluated extensions
+(defclass class_extension_generation_context
+  :super class_initial_generation_context
+  :fields (egncx_valoclist
+	   egncx_litvaltuploc
+	   )
+  :doc #{The internal $CLASS_EXTENSION_GENERATION_CONTEXT (for gurus)
+is used when generating the initial routine of an extension, i.e. for
+runtime evaluation of expressions. $EGNCX_VALOCLIST is the list of
+literal values stack locations, and $EGNCX_LITVALTUPLOC is the stack location for the
+literal values tuple.}# )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; common superclass for objcode
+(defclass class_generated_c_code
+  :super class_root
+  :fields (
+	   )
+  :doc #{The super-class $CLASS_GENERATED_C_CODE is a common
+super-class for representing generated C abstract syntax trees inside
+the MELT translator. Within MELT, it has nothing in common with GCC
+compiled C abstract syntax trees (that is @code{:tree} and
+@code{:gimple}).}#)
+
+
+;; 
+
+;;****************************************************************
+;;       P R I M I T I V E S 
+;;****************************************************************
+;;; many primitives have moved to warmelt-base.melt
+
+
+;; primitive for converting a string constant into a string value
+(defprimitive stringconst2val (discr :cstring strc) :value
+  :doc #{Convert a C-string constant $STRC into a string value of discriminant $DISCR. See also $QUOTE macro applied to a string.}#
+  #{meltgc_new_string((meltobject_ptr_t)($discr), ($strc))}#)
+
+
+;; primitive for testing if an object is a (sub) instance of a class
+(defprimitive is_a (obj cla) :long
+  :doc #{Test if $OBJ is an instance of the $CLA class [or a
+ subclass]. Return 0 otherwise, e.g. when $OBJ is not an object. See
+ also $IS_NOT_A.}#
+ #{melt_is_instance_of((melt_ptr_t)($obj), (melt_ptr_t)($cla))}#)
+
+;; primitive for testing if an object is NOT a (sub) instance of a class
+(defprimitive is_not_a (obj cla) :long
+  :doc #{Test if $OBJ is @emph{not} an instance of the $CLA class [or a
+ subclass]. Negation of $IS_A.}#
+ #{!melt_is_instance_of((melt_ptr_t)($obj), (melt_ptr_t)($cla))}#)
+
+;; primitive for testing objectness
+(defprimitive is_object (obj) :long
+  :doc #{Test if $OBJ is indeed an object. See also $IS_NOT_OBJECT.}#
+  #{(melt_magic_discr((melt_ptr_t)($obj)) == MELTOBMAG_OBJECT)}#)
+
+
+;; primitive to get the discriminant of a value
+(defprimitive discrim (v) :value
+  :doc #{Safely gives the discriminant of a value (even if it is null).}#
+  #{((melt_ptr_t) (melt_discr((melt_ptr_t)($v))))}#)
+
+;; primitive to get the integer inside a boxed or mixed integer or objnum
+(defprimitive get_int (v) :long
+  :doc #{Safely gets the integer number inside $V, a boxed or mixed
+  integer, or an object.}#
+  #{(melt_get_int((melt_ptr_t)($v)))}#)
+;; primitive to put the integer inside a boxed or mixed integer or objnum
+(defprimitive put_int (v :long i) :void
+  :doc #{Safely puts the integer number $I inside $V, a boxed or mixed
+  integer, or an object.}#
+  #{melt_put_int((melt_ptr_t)($v), ($i))}#)
+
+
+
+;; primitive for identity and non-identity test
+(defprimitive == (a b) :long 
+  :doc #{Test identity of values $A and $B.}#
+  #{(($a) == ($b))}#)
+(defprimitive != (a b) :long 
+  :doc #{Test that values $A and $B are not identical.}#
+  #{(($a) != ($b))}#)
+
+
+;;; the call counter - do not redefine the name, it is used by expansion of debug_msg macro!
+(defprimitive melt_callcount () :long 
+#{/* for melt_callcount */
+#if MELT_HAVE_DEBUG && defined (meltcallcount)
+  meltcallcount  /* melt_callcount debugging */
+#else
+  0L  /* melt_callcount without debug */
+#endif /* MELT_HAVE_DEBUG melt_callcount */
+}#)
+
+
+;;; the current frame depth
+(defprimitive the_framedepth () :long "(melt_curframdepth())")
+
+
+
+;; primitive to get or create a symbol from a string value
+(defprimitive get_symbolstr (strv) :value
+  :doc #{Get an existing symbol of given string value $STRV or null if
+  not found. Use $HOOK_NAMED_SYMBOL.}#
+  #{melthookproc_HOOK_NAMED_SYMBOL (melt_string_str((melt_ptr_t)($STRV)), (long)MELT_GET)}#)
+(defprimitive create_symbolstr (strv) :value
+  :doc #{Retrieve an existing symbol of given string value $STRV or
+create it if not found. Use $HOOK_NAMED_SYMBOL.}# 
+  #{melthookproc_HOOK_NAMED_SYMBOL (melt_string_str((melt_ptr_t)($STRV)), 
+			(long)MELT_CREATE)}#)
+(defprimitive get_raw_symbol (:cstring cstr) :value
+  :doc #{Get an existing symbol of given cstring $CSTR or else
+null. Use $HOOK_NAMED_SYMBOL.}# 
+#{melthookproc_HOOK_NAMED_SYMBOL ((const char*) ($CSTR), (long)MELT_GET)}#)
+
+;; primitive to get or create a keyword from a string value
+(defprimitive get_keywordstr (strv) :value
+  :doc #{Get an existing keyword of given string value $STRV or null if not found. 
+Use $HOOK_NAMED_KEYWORD}#
+  #{melthookproc_HOOK_NAMED_KEYWORD (melt_string_str((melt_ptr_t)($STRV)), (long) MELT_GET)}#)
+(defprimitive create_keywordstr (strv) :value
+  :doc #{Retrieve an existing keyword of given string value $STRV or
+create it if not found.}# 
+  #{melthookproc_HOOK_NAMED_KEYWORD (melt_string_str((melt_ptr_t)($STRV)), (long) MELT_CREATE)}#)
+
+;;; most compare primitives moved to warmelt-base.melt; we keep here
+;;; those that are useful in this warmelt-first.melt file.
+
+;;; compare of longs  
+(defprimitive <i (:long a b) :long :doc #{Integer test that $A less than $B.}#
+  #{(($a) < ($b))}#)
+(defprimitive >i (:long a b) :long  :doc #{Integer test that $A greater than $B.}# 
+  #{(($a) > ($b))}#)
+(defprimitive >=i (:long a b) :long :doc #{Integer test that $A greater or equal to $B.}#
+  #{(($a) >= ($b))}#)
+;;; integer arithmetic, most is moved to warmelt-base.melt
+(defprimitive +i (:long a b) :long  :doc #{Integer binary addition of $a and $b.}#
+  #{(($a) + ($b))}#)
+
+(defprimitive /i (:long a b) :long  :doc #{Integer binary division of $a and $b, robust to zero-divide.}#
+  #{(melt_idiv(($a), ($b)))}#)
+(defprimitive %i (:long a b) :long   :doc #{Integer binary modulus of $a and $b, robust to zero-divide.}#
+  #{(melt_imod(($a), ($b)))}#)
+(defprimitive /iraw (:long a b)  :long  :doc #{Integer raw division of $a and $b, crash on zero-divide.}# #{(($a) / ($b))}#)
+(defprimitive %iraw (:long a b)  :long  :doc #{Integer raw modulus of $a and $b, crash on zero-divide.}##{(($a) % ($b))}#)
+;; boolean not
+(defprimitive not (:long i) :long  :doc #{Integer unary logical negation of $i.}#  #{(!($i))}#)
+
+
+
+;; variadic primitives are needed by melt_assert_failure_fun
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; variadic related utilities
+
+;; the index of variadic argument
+(defprimitive variadic_index () :long
+  :doc #{Returns the current index of variadic argument, or -1 outside
+  of variadic functions.}#
+;; the melt_variadic_index macro is defined by code emitted in function
+;; outpucod_procroutine of file warmelt-outobj.melt
+  #{ /*variadic_index*/
+#ifdef melt_variadic_index
+  (melt_variadic_index)
+#else
+  -1
+#endif /*melt_variadic_index*/
+}#)
+
+;; the length or count of variadic arguments
+(defprimitive variadic_length () :long
+  :doc #{Returns the length of variadic arguments, or -1 outside
+  of variadic functions.}#
+;; the melt_variadic_length macro is defined by code emitted in function
+;; outpucod_procroutine of file warmelt-outobj.melt
+  #{ /*variadic_length*/
+#ifdef melt_variadic_length
+  (melt_variadic_length)
+#else
+  -1
+#endif /*melt_variadic_length*/
+}#)
+
+
+;; skip some variadic arguments
+(defprimitive variadic_skip (:long delta) :void
+  :doc #{Skip some variadic arguments, by incrementing appropriately the variadic index.}#
+;; the melt_variadic_index & melt_variadic_length macros are defined
+;; by code emitted in function outpucod_procroutine of file
+;; warmelt-outobj.melt
+  #{ /*variadic_skip*/
+#ifdef melt_variadic_index
+  melt_variadic_index += (int) ($DELTA);
+  if (melt_variadic_index < 0) 
+     melt_variadic_index = 0;
+  else if (melt_variadic_index > melt_variadic_length) 
+     melt_variadic_index = melt_variadic_length;
+#else
+  /* no variadic_skip outside of variadic functions */
+  (void) ($DELTA);
+#endif /*melt_variadic_index*/
+}#)
+
+(defprimitive variadic_type_code (:long delta) :long
+  :doc #{Return the type code, i.e. an integer from the MELTBPAR_*
+  enumeration, of the variadic argument at offset $DELTA, or else
+  [outside of variadic functions, or index out of bounds] 0, that is
+  MELTBPAR__NONE. See also $VARIADIC_CTYPE.}#
+#{ /*variadic_type_code*/
+#ifdef melt_variadic_index
+  (((melt_variadic_index + $DELTA) >= 0
+    && (melt_variadic_index + $DELTA) < melt_variadic_length) 
+  ? (long) (meltxargdescr_[melt_variadic_index + $DELTA] & MELT_ARGDESCR_MAX)
+  : 0)
+#else
+  (0 && $DELTA /* no variadic_type_code outside of variadic functions */)
+#endif /*melt_variadic_index*/
+}#)
+
+(defprimitive variadic_ctype  (:long delta) :value
+  :doc #{Return the ctype of the variadic argument at offset $DELTA,
+  or else Nil. See also $VARIADIC_TYPE_CODE.}#
+#{ /*variadic_type_code*/
+#ifdef melt_variadic_index
+  (((melt_variadic_index + $DELTA) >= 0
+    && (melt_variadic_index + $DELTA) < melt_variadic_length) 
+  ?  melt_code_to_ctype (meltxargdescr_[melt_variadic_index + $DELTA] 
+			 & MELT_ARGDESCR_MAX)
+  : NULL)
+#else
+  NULL /* no variadic_ctype outside of variadic functions */
+#endif /*melt_variadic_index*/
+}#)
+
+;; runtime assertion with message called by expansion of assert_msg
+;;; @@ UGLY HACK TO ALWAYS HAVE A filename
+(defprimitive assert_failed (:cstring msg :cstring filename :long lineno) :void
+  :doc #{Internally used by $ASSERT_MSG macro. Runtime assert failed with message $MSG in file $FILENAME at line $LINENO.}#
+  #{melt_assert_failed(($msg),($filename)?($filename):__FILE__,
+  ($lineno)?($lineno):__LINE__, __FUNCTION__);
+}#)
+
+;; improved internal variadic function used by ASSERT_MSG
+(defun melt_assert_failure_fun (nothing :cstring msg :cstring filename :long lineno :rest)
+  (code_chunk info_chk #{ /* melt_assert_failure_fun $INFO_CHK */
+	      static bool got_assert;
+	      melt_fatal_info ($FILENAME, $LINENO);
+	      if (!$FILENAME) $FILENAME="???";
+	      fprintf(stderr, "\n"
+			      "!+! MELT ASSERT FAILURE @%s:%ld: %s\n",
+			      $FILENAME, $LINENO, $MSG);
+	      fflush (NULL);
+	      if (got_assert) 
+  	        fatal_error ("!*!*! RECURSIVE MELT ASSERT FAILURE @%s:%ld: %s", 
+			     $FILENAME, $LINENO, $MSG);
+              got_assert = true;
+	      }#)
+  (let ( (:long argcount 0)
+	 )
+    (forever 
+     argloop
+     (setq argcount (+i argcount 1))
+     (variadic 
+      ( ()
+	(exit argloop))
+      ( (:cstring str)
+	(code_chunk failstring_chk #{ /* melt_assert_failure_fun $FAILSTRING_CHK */
+		    fprintf (stderr, " %s", $STR);
+		    }#)
+	)
+      ( (:long l)
+	(code_chunk faillong_chk #{ /* melt_assert_failure_fun $FAILLONG_CHK */
+		    fprintf (stderr, " %ld", $L);
+		    }#)
+	)
+      ( (:value v)
+        (code_chunk failval_chk #{ /* melt_assert_failure_fun $FAILVAL_CHK */
+           char failmsg[32];
+           snprintf (failmsg, sizeof(failmsg), "$$%ld=", $ARGCOUNT);
+	   /* in melt_assert_failure_fun $FAILVAL_CHK */
+           melthookproc_HOOK_LOW_STDERR_VALUE_AT ($V,
+                                                 melt_basename ($FILENAME),
+                                                 $LINENO,
+                                                 failmsg,
+                                                 $ARGCOUNT);
+	   fputc('\n', stderr);
+	   fflush (stderr);
+	   }#)
+	)
+      ( :else
+	(let ( (vctype (variadic_ctype 0))
+	       (vctyname (get_field :named_name vctype))
+	       )
+        (code_chunk failother_chk #{ /* melt_assert_failure_fun $FAILOTHER_CHK */
+		    fprintf (stderr, " $$%ld?%s?", $ARGCOUNT, melt_string_str($VCTYNAME));
+		    }#)
+	)
+      ))
+    ))
+  (code_chunk final_chk #{ /* melt_assert_failure_fun $FINAL_CHK */
+	      fputc('\n', stderr);
+	      fflush (NULL);
+	      melt_assert_failed ($MSG, $FILENAME, (int) $LINENO, __FUNCTION__);
+	      }#)
+  )
+
+(defprimitive informsg_strv (:cstring cmsg :value strv) :void
+  :doc #{Show a plain notice with raw message string $CMSG and string value $STRV.}#
+  #{inform(UNKNOWN_LOCATION, ("MELT INFORM [#%ld]: %s - %s"), melt_dbgcounter, ($cmsg), 
+			     melt_string_str((melt_ptr_t)($STRV)))}#
+  )
+
+
+;; cmatchers on integers
+
+
+;;; match an integer i greater than a given number n
+(defcmatcher integer_greater_than
+  (:long i n)
+  ()
+  intgreathan
+  :doc #{The $INTEGER_GREATER_THAN matcher with input number $N matches
+an integer $I if $I is greater than $N.}#
+  ;; test expansion
+  #{ /*$INTGREATHAN ?*/ ($I > $N) }#
+  ;; no fill expansion
+)
+
+
+;;; nullity test (for values)
+(defprimitive null (v) :long :doc #{Test that $V is the null value.}#
+  #{(($v) == NULL)}#)
+
+;; pattern to match null value
+(defcmatcher as_null
+  (:value nv)
+  ()
+  asnull
+  :doc #{The $AS_NULL matcher marches null values.}#
+  ;; test
+  #{ /*$ASNULL ?*/ ($NV == NULL) }#
+  ;; no fill expansion
+)
+
+;; primitive for testing if debug
+(defprimitive melt_need_dbg (:long depth) :long 
+:doc #{Test if debug messages are needed for the given $DEPTH. Trivially false in optimized flavor.}#
+  #{/*MELT_NEED_DBG*/
+#if MELT_HAVE_DEBUG
+ (/*melt_need_dbg*/ melt_need_debug ((int) $DEPTH))
+#else
+ 0 /* no melt_need_dbg */
+#endif /*MELT_HAVE_DEBUG*/
+}#)
+
+(defprimitive melt_need_dbglim (:long depth limit) :long 
+:doc #{Test if debug messages are needed for the given $DEPTH and $LIMIT. Trivially false in optimized flavor.}#
+  #{ /*melt_need_dbglim*/
+#if MELT_HAVE_DEBUG
+( /*melt_need_dbglim*/ melt_need_debug_limit ((int) $DEPTH, (int) $LIMIT))
+#else
+ 0 /* no melt_need_dbglim */
+#endif /*MELT_HAVE_DEBUG*/
+}#)
+
+(defprimitive shortbacktrace_dbg (:cstring msg :long maxdepth) :void
+  :doc #{Short debug backtrace with message $MSG up to $MAXDEPTH.}#
+  #{ 
+#if MELT_HAVE_DEBUG
+  if (melt_need_debug (0))
+    melt_dbgshortbacktrace(($msg), ($maxdepth));
+#endif
+}#)
+
+
+(defprimitive the_null_cstring () :cstring
+  :doc #{The null const cstring.}#
+  #{(char*)0}#
+)
+
+(defprimitive cstring_is_null (:cstring s) :long
+  :doc #{Test ia the cstring $S is NULL}#
+  #{(($S) == NULL)}#
+)
+
+(defprimitive cstring_non_empty (:cstring s) :long
+  :doc #{Test ia the cstring $S is not NULL and not empty}#
+  #{((($S) != NULL) && ((const char*)($S))[0] != (char)0)}#
+)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;; STRING primitives
+;; primitive for testing if a value is a string
+(defprimitive is_string (str) :long
+  :doc #{Test that $STR is a string values.}#
+  #{(melt_magic_discr((melt_ptr_t)($str)) == MELTOBMAG_STRING)}#)
+
+;; it is impossible to safely retrieve, in a MELT primitive, a
+;; :cstring stuff from a string value, because MELT values are moved
+;; by its copying collector, so the char* pointer returned as :cstring
+;; will become bogus. So melt_string_str cannot be made a primitive,
+;; but can be used inside other primitives, when you are sure they
+;; don't trigger GC.
+
+;; string equal
+(defprimitive ==s (s1 s2) :long
+  :doc #{Test that $S1 and $S2 are both string values and are equal.}#
+  #{melt_string_same((melt_ptr_t)($s1), (melt_ptr_t)($s2))}#)
+(defprimitive !=s (s1 s2) :long
+  :doc #{Test that $S1 and $S2 are not both string equal values.}#
+  #{!melt_string_same((melt_ptr_t)($s1), (melt_ptr_t)($s2))}#)
+
+(defun is_empty_string (string)
+  :doc #{Test that value string is empty}#
+  (if (==s string '"") (return :true))
+)
+
+(defun is_non_empty_string (string)
+  :doc #{Test that value string is not empty}#
+  (if (!=s string '"") (return :true))
+)
+
+(defprimitive make_stringconst (dis :cstring cstr) :value
+  :doc #{Make a new string of distriminant $DIS from raw string constant $CSTR.}#
+  #{(meltgc_new_stringdup((meltobject_ptr_t)($dis), ($cstr)))}#)
+
+(defprimitive string< (s1 s2) :long 
+  :doc #{Test that value string $S1 is less than $S2, compared alphanumerically as strings.}#
+  #{melt_string_less((melt_ptr_t)($s1), (melt_ptr_t)($s2))}#)
+(defprimitive string> (s1 s2) :long 
+  :doc #{Test that value string $S1 is greater than $S2.}#
+  #{melt_string_less((melt_ptr_t)($s2), (melt_ptr_t)($s1))}#)
+
+(defprimitive string_to_long (string) :long
+	:doc #{Read a string value and returns the corresponding
+	long stuff. 0 is returned if an error occurs while reading.}#
+	#{
+		atol(melt_string_str((melt_ptr_t) $STRING))
+	}#)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;; MULTIPLEs primitives
+;;;; test
+(defprimitive is_multiple (mul) :long
+  :doc #{Safely test if $MUL is a tuple.}#
+  #{(melt_magic_discr((melt_ptr_t)($mul)) == MELTOBMAG_MULTIPLE)}#)
+;;; make
+(defprimitive make_multiple (discr :long ln) :value
+  :doc #{Make a tuple of given discriminant $DISCR and length $LN - gives null otherwise.}#
+  #{(meltgc_new_multiple((meltobject_ptr_t)($discr), ($ln)))}#)
+
+
+;; primitive to get the nth  in a multiple
+(defprimitive multiple_nth (mul :long n) :value
+  :doc #{Safely retrieve from tuple $MUL its $N-th component or else null.}#
+  #{(melt_multiple_nth((melt_ptr_t)($mul), ($n)))}#)
+;; primitive to get the length of a multiple
+(defprimitive multiple_length (mul) :long
+  :doc #{Gives the length of tuple $MUL.}#
+  #{(melt_multiple_length((melt_ptr_t)($mul)))}#)
+;; put into a multiple.
+(defprimitive multiple_put_nth (mul :long n :value v) :void
+  :doc #{Put into tuple $MUL at rank $N the component $V. Avoid circularities!}#
+  #{meltgc_multiple_put_nth((melt_ptr_t)($mul), ($n), (melt_ptr_t)($V))}#)
+;; sort a multiple, the compare function should return a boxed integer
+(defprimitive multiple_sort (mul cmp discrm) :value
+  :doc #{Gives the sorted tuple from tuple $MUL using compare function
+  $CMP (returning a boxed integer) and discriminant $DISCRM.}#
+  #{meltgc_sort_multiple((melt_ptr_t)($mul), (melt_ptr_t)($cmp), (melt_ptr_t)($discrm))}#)
+
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;; MAPOBJECTs primitives
+;;;; test
+(defprimitive is_mapobject (map) :long
+  :doc #{Test if given $MAP is an object map.}#
+  #{/*is_mapobject:*/(melt_magic_discr((melt_ptr_t)($MAP)) == MELTOBMAG_MAPOBJECTS)}#)
+
+;; primitive to get the allocated size of a mapobject
+(defprimitive mapobject_size (map) :long
+  :doc #{Safely retrieve the allocated size of given object-map $MAP or else 0.}#
+  #{(melt_size_mapobjects((meltmapobjects_ptr_t)($MAP)))}#)
+
+;; primitive to get the attribute count of a mapobject
+(defprimitive mapobject_count (map) :long
+  :doc #{Safely retrieve the count of given object-map $MAP or else 0.}#
+  #{(melt_count_mapobjects((meltmapobjects_ptr_t)($map)))}#)
+
+;; primitive to get the nth attribute of a mapobject
+(defprimitive mapobject_nth_attr (map :long n) :value
+  :doc #{Safely retrieve from given object-map $MAP its $N-th attribute or else null.}#
+  #{/*mapobject_nth_attr:*/ (melt_ptr_t) (melt_nthattr_mapobjects((meltmapobjects_ptr_t)($MAP), 
+								  (int)($N)))}#)
+
+;; primitive to get the nth value of a mapobject
+(defprimitive mapobject_nth_val (map :long n) :value
+  :doc #{Safely retrieve from given object-map $MAP its $N-th value or else null.}#
+  #{(melt_nthval_mapobjects((meltmapobjects_ptr_t)($MAP), (int)($N)))}#)
+
+;; primitive to get the value of an attribute in a mapobject
+(defprimitive mapobject_get (map attr) :value
+  :doc #{Safely get from given object-map $MAP the value associated to $ATTR or else null.}#
+  #{/*mapobject_get*/ melt_get_mapobjects((meltmapobjects_ptr_t)($MAP), 
+					  (meltobject_ptr_t)($ATTR))}#)
+
+;; primitive for making a new map of objects
+(defprimitive make_mapobject (discr :long len) :value
+  :doc #{Make an object-map of discriminant $DISCR and initial size $LEN or null.}#
+  #{(meltgc_new_mapobjects( (meltobject_ptr_t) ($discr), ($len)))}#)
+
+;; primitive for putting into a map of objects
+(defprimitive mapobject_put (map key val) :void
+  :doc #{Safely put into object-map $MAP the given $KEY with $VAL.}#
+  #{meltgc_put_mapobjects( (meltmapobjects_ptr_t) ($map), 
+			   (meltobject_ptr_t) ($key), 
+			   (melt_ptr_t)($val))}#)
+
+;; primitive for removing from a map of objects
+(defprimitive mapobject_remove (map key) :void
+  :doc #{Safely remove from object-map $MAP the given $KEY.}#
+  #{meltgc_remove_mapobjects( (meltmapobjects_ptr_t) ($map), 
+			      (meltobject_ptr_t)($key))}#)
+
+;; primitive accessing the auxiliary data for a map of objects
+(defprimitive mapobject_aux (map) :value
+  :doc #{Safely access the auxiliary data of object-map $MAP.}#
+  #{melt_auxdata_mapobjects ((melt_ptr_t) ($MAP))}#)
+
+;; primitive putting the auxiliary data for a map of objects
+(defprimitive mapobject_auxput (map val) :void
+  :doc #{Safely access the auxiliary data of object-map $MAP.}#
+  #{melt_auxput_mapobjects ((melt_ptr_t) ($MAP), (melt_ptr_t) ($VAL))}#)
+
+;;; iterator inside a map of object
+(defciterator foreach_in_mapobject
+  (:value objmap)
+  eachobmap
+  (:value curat curva)
+  :doc #{The $FOREACH_IN_MAPOBJECT c-iterator iterates inside the
+  given $OBJMAP and retrieves a $CURAT attribute and its $CURVA
+  value.}#
+  ;; before expansion
+  #{ /* foreach_in_mapobject $EACHOBMAP :*/ int $EACHOBMAP#_ix=0, $EACHOBMAP#_siz=0;
+  for ($EACHOBMAP#_ix=0; 
+     /* we retrieve in $EACHOBMAP#_siz the size at each iteration since it could change. */
+       $EACHOBMAP#_ix>=0 
+       && ($EACHOBMAP#_siz= 
+	     melt_size_mapobjects((meltmapobjects_ptr_t)$OBJMAP))>0
+       && $EACHOBMAP#_ix < $EACHOBMAP#_siz;
+       $EACHOBMAP#_ix++) {
+    $curat = NULL;
+    $curva = NULL;
+    $curat = (melt_ptr_t) (((meltmapobjects_ptr_t)$OBJMAP)->entab[$EACHOBMAP#_ix].e_at);
+    if ($CURAT == HTAB_DELETED_ENTRY) { $CURAT = NULL; 
+                                        continue; };
+    if (!$CURAT) continue;
+    $curva = ((meltmapobjects_ptr_t)$OBJMAP)->entab[$EACHOBMAP#_ix].e_va;
+    if (!$CURVA) continue; 
+}#
+;;; after expansion
+  #{ /* foreach_in_mapobject end $EACHOBMAP */
+    $curat = NULL;  
+    $curva = NULL;  }
+}#
+)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;; MAPSTRINGs primitive
+;; test
+(defprimitive is_mapstring (map) :long
+  :doc #{Safely test if $MAP is a string-map.}#
+  #{(melt_magic_discr((melt_ptr_t)($map)) == MELTOBMAG_MAPSTRINGS)}#)
+;; primitive for making a new map of strings
+(defprimitive make_mapstring (discr :long len) :value
+  :doc #{Make a new string-map of discriminant $DISCR and initial length $LEN - or null if failed.}#
+  #{(meltgc_new_mapstrings( (meltobject_ptr_t) ($discr), ($len)))}#)
+(defprimitive mapstring_putstr (map keystr val) :void
+  :doc #{Safely put into a string-map $MAP the string value $KEYSTR associated to value $VAL.}#
+  #{meltgc_put_mapstrings((struct meltmapstrings_st *) ($MAP), 
+			  melt_string_str((melt_ptr_t)($KEYSTR)), 
+			  (melt_ptr_t)($VAL))}#)
+(defprimitive mapstring_getstr (map keystr) :value
+  :doc #{Safely get in a string-map $MAP the value associated with a value string $KEYSTR or else null.}#
+  #{(melt_get_mapstrings((struct meltmapstrings_st*)($MAP), 
+			 melt_string_str((melt_ptr_t)($KEYSTR))))}#)
+(defprimitive mapstring_removestr (map keystr) :void
+  :doc #{Safely remove from a string-map $MAP the value associated with string value $KEYSTR.}#
+  #{meltgc_remove_mapstrings((struct meltmapstrings_st*) ($map), melt_string_str((melt_ptr_t)$keystr))}#)
+
+;; primitive to make the nth stringattr of a mapstring
+(defprimitive mapstring_nth_attrstr (map sdicr :long n) :value
+  :doc #{Safely get from string-map $MAP the $N-th string and make a string value of 
+discriminant $SDICR from it.}#
+  #{(meltgc_new_stringdup((meltobject_ptr_t)($sdicr),  
+			  melt_nthattrraw_mapstrings((struct meltmapstrings_st*)($map), (int)($n))))}#)
+;; primitive to get the nth value of a mapstring
+(defprimitive mapstring_nth_val (map :long n) :value
+  :doc #{Safely retrieve from string-map $MAP its $N-th value or null.}#
+  #{(melt_nthval_mapstrings((struct meltmapstrings_st*)($map), (int)($n)))}#)
+
+;; primitive accessing the auxiliary data of a mapstring
+(defprimitive mapstring_aux (map) :value
+  :doc #{Safely retrieve auxiliary data from string-map $MAP.}#
+  #{melt_auxdata_mapstrings ((melt_ptr_t)$MAP)}#)
+
+;; primitive putting the auxiliary data of a mapstring
+(defprimitive mapstring_auxput (map val) :void
+  :doc #{Safely set auxiliary data of string-map $MAP to $VAL.}#
+  #{melt_auxput_mapstrings (((melt_ptr_t) $MAP), ((melt_ptr_t) $VAL))}#)
+
+;;; iterator inside a map of strings
+(defciterator foreach_in_mapstring
+  (:value strmap)
+  eachstrmap
+  (:value curat curva)
+  :doc #{The $FOREACH_IN_MAPSTRING c-iterator iterates inside the
+given $STRMAP and retrieves a $CURAT string attribute value and its
+$CURVA value. If $CURVA happens to be an instance of $CLASS_NAMED
+with a name equal to the string key, we use it as $CURAT otherwise we
+make a $CURAT string.}#
+  ;; before expansion
+  #{ /*foreach_in_mapstring $EACHSTRMAP :*/ int $EACHSTRMAP#_ix=0, $EACHSTRMAP#_siz=0;
+  for ($EACHSTRMAP#_ix=0; 
+     /* we retrieve in $EACHSTRMAP#_siz the size at each iteration since it could change. */
+       $EACHSTRMAP#_ix>=0 
+       && ($EACHSTRMAP#_siz =
+            melt_size_mapstrings((struct meltmapstrings_st*)$STRMAP)) > 0
+       && $EACHSTRMAP#_ix < $EACHSTRMAP#_siz;
+       $EACHSTRMAP#_ix++) {
+    const char* $EACHSTRMAP#_str = NULL;
+    const char* $EACHSTRMAP#_nam = NULL;
+    $CURAT = NULL;
+    $CURVA = NULL;
+    $EACHSTRMAP#_str = 
+      ((struct meltmapstrings_st*)$STRMAP)->entab[$eachstrmap#_ix].e_at;
+    if (!$EACHSTRMAP#_str || $EACHSTRMAP#_str == HTAB_DELETED_ENTRY)
+      continue; /*foreach_in_mapstring $EACHSTRMAP inside before*/
+    $CURVA = ((struct meltmapstrings_st*)$STRMAP)->entab[$EACHSTRMAP#_ix].e_va;
+    if (!$CURVA) 
+     continue; 
+    if (melt_is_instance_of((melt_ptr_t) $CURVA, (melt_ptr_t) MELT_PREDEF (CLASS_NAMED)) 
+	&& ($CURAT = melt_object_nth_field ((melt_ptr_t) $CURVA, 
+					    MELTFIELD_NAMED_NAME)) != NULL
+	&& ($EACHSTRMAP#_nam =
+			     melt_string_str ((melt_ptr_t) $CURAT)) != (char*)0
+	&& !strcmp ($EACHSTRMAP#_nam, $EACHSTRMAP#_str))
+      $CURAT = $CURAT;
+    else {
+      $CURAT = NULL;
+      $CURAT = 
+          meltgc_new_stringdup ((meltobject_ptr_t) MELT_PREDEF (DISCR_STRING), 
+				$EACHSTRMAP#_str);
+    }
+    $EACHSTRMAP#_str = (const char*)0;
+    $EACHSTRMAP#_nam = (const char*)0;
+}#
+;;; after expansion
+  #{ /* end foreach_in_mapstring $EACHSTRMAP */
+    $curat = NULL;  
+    $curva = NULL;  
+  }}#
+)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;; ROUTINEs primitives
+;; test
+(defprimitive is_routine (rou) :long
+  :doc #{Test if value $ROU is a routine.}#
+  #{(melt_magic_discr((melt_ptr_t)($ROU)) == MELTOBMAG_ROUTINE)}#)
+
+;;; descriptive string of a routine
+(defprimitive routine_descr (rou) :value
+  :doc #{Retrieve the descriptive value string of a routine $ROU or else null.}#
+  #{/*routine_descr:*/ (meltgc_new_stringdup ((meltobject_ptr_t) MELT_PREDEF(DISCR_STRING),
+					      melt_routine_descrstr ((melt_ptr_t)($ROU))))}#)
+;;; size of a routine
+(defprimitive routine_size  (rou) :long
+  :doc #{Gives the size of a routine value $ROU, i.e. its number of constants.}#
+  #{(melt_routine_size((melt_ptr_t)($rou)))}#)
+;;; nth comp in routine
+(defprimitive routine_nth (rou :long ix) :value
+  :doc #{Retrieve in routine value $ROU its component of index $IX.}#
+  #{(melt_routine_nth((melt_ptr_t)($rou), (int) ($ix)))}#)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;; CLOSUREs primitives
+;; test
+(defprimitive is_closure (clo) :long
+  :doc #{Test if value $CLO is a closure, i.e. a functional value.}#
+  #{(melt_magic_discr((melt_ptr_t)($clo)) == MELTOBMAG_CLOSURE)}#)
+(defprimitive closure_size (clo) :long
+  :doc #{Give the size of a closure value $CLO, i.e. the number of closed values.}#
+  #{(melt_closure_size((melt_ptr_t)($clo)))}#)
+(defprimitive closure_routine (clo) :value
+  :doc #{Give the routine value inside a closure value $CLO or else null.}#
+  #{(melt_closure_routine((melt_ptr_t)($clo)))}#)
+(defprimitive closure_nth (clo :long ix) :value
+  :doc #{Retrieve in closure value $CLO its component of index $IX.}#
+  #{(melt_closure_nth((melt_ptr_t)($clo), (int)($ix)))}#)
+
+(defcmatcher closure
+  (clo)
+  ()
+  closurematch
+  :doc #{The $CLOSURE patterns matches a closure.}#
+  #{ /* closure $closurematch ? */ $CLO && melt_magic_discr((melt_ptr_t)$CLO) == MELTOBMAG_CLOSURE }#
+  #{ /* closure $closurematch ! */ }#
+)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;; HOOKs primitives
+;; test
+(defprimitive is_hook (hk) :long
+  :doc #{Test if value $HK is a hook - a @i{C/C++} callable @i{closed c-function}}#
+  #{(melt_magic_discr((melt_ptr_t)($HK)) == MELTOBMAG_HOOK)}#)
+(defprimitive hook_size (hk) :long
+  :doc #{Return the checked size of a hook $HK or else 0}#
+  #{melt_hook_size((melt_ptr_t) $HK)}#)
+(defprimitive hook_nth (:value hk :long n) :value
+  :doc #{Return from inside the hook $HK its $N-th value or else nil.}#
+  #{melt_hook_nth((melt_ptr_t)$HK, (int)$N)}#)
+(defprimitive hook_data (:value hk) :value
+  :doc #{Return the data inside some hook $HK or else nil.}#
+  #{melt_hook_data((melt_ptr_t)$HK)}#)
+(defprimitive hook_put_data (:value hk data) :void
+  :doc #{Safely put in hook $HK the given $DATA.}#
+  #{meltgc_set_hook_data((melt_ptr_t)$HK, (melt_ptr_t)$DATA)}#)
+(defprimitive hook_name (:value hk) :value
+  :doc #{Return the value string for the name of some hook $HK or else nil.}#
+  #{meltgc_hook_name_string((melt_ptr_t)$HK)}#)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;; boxed INTEGERs primitives
+;; test
+(defprimitive is_integerbox (ib) :long
+  :doc #{Test if a value $IB is a boxed integer.}#
+  #{(melt_magic_discr((melt_ptr_t)($ib)) == MELTOBMAG_INT)}#)
+;; to get the boxed integer use get_int
+;; make
+(defprimitive make_integerbox (discr :long n) :value
+  :doc #{Make a boxed integer of given discrimant $DISCR and integer $N.}#
+  #{(meltgc_new_int((meltobject_ptr_t)($discr), ($n)))}#)
+
+;;; pattern
+(defcmatcher integerbox_of 
+  (:value bx)
+  (:long ict)
+  iboxof
+  :doc #{The $INTEGERBOX_OF patern matches a boxed integer $BX. If indeed it
+  is a boxed integer, its integer content should match $ICT. The match
+  fails if $BX is not a boxed integer (e.g. is the null value or non
+  boxed-integer). See also $MAKE_INTEGERBOX $IS_INTEGERBOX.}#
+  ;; test
+  #{ /* integerbox_of $IBOXOF ?*/ $BX 
+     && melt_magic_discr((melt_ptr_t) $BX) == MELTOBMAG_INT }#
+  ;; fill
+  #{ /* integerbox_of $IBOXOF !*/ $ICT = ((struct meltint_st*)$BX)->val; }#
+)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;; LIST primitives
+;; test
+(defprimitive is_list (li) :long
+  :doc #{Test if value $LI is a list.}#
+  #{(melt_magic_discr((melt_ptr_t)($li)) == MELTOBMAG_LIST)}#)
+(defprimitive is_list_or_null (li) :long
+  :doc #{Test iv value $LI is null or a list.}#
+  #{(($li) == NULL 
+     || (melt_unsafe_magic_discr((melt_ptr_t)($li)) == MELTOBMAG_LIST))}#)
+;; test if a list is non-empty
+(defprimitive is_non_empty_list (li) :long
+  :doc #{Test if value $LI is a non-empty list.}#
+  #{(melt_magic_discr((melt_ptr_t)($li)) == MELTOBMAG_LIST && NULL != melt_list_first((melt_ptr_t)($li)))}#)
+;; first pair of list
+(defprimitive list_first (li) :value
+  :doc #{Safely retrieve the first pair of list value $LI, or null.}#
+  #{(melt_list_first((melt_ptr_t)($li)))}#)
+;; last pair of list
+(defprimitive list_last (li) :value
+  :doc #{Safely retrieve the last pair of list value $LI, or null.}#
+  #{(melt_list_last((melt_ptr_t)($li)))}#)
+;;  first element of list
+(defprimitive list_first_element (li) :value
+  :doc #{Safely retrieve the first element of list value $LI, or null.}#
+  #{(melt_pair_head (melt_list_first((melt_ptr_t)($li))))}#)
+;; length of list
+(defprimitive list_last_element (li) :value
+  :doc #{Safely retrieve the last element of list value $LI, or null.}#
+  #{(melt_pair_head (melt_list_last((melt_ptr_t)($li))))}#)
+(defprimitive list_length (li) :long
+  :doc #{Safely compute the length of list value $LI, or else 0.}#
+  #{(melt_list_length((melt_ptr_t)($li)))}#)
+;; append into list
+(defprimitive list_append (li el) :void
+  :doc #{Safely append to list value $LI an element $EL thru a new pair.}#
+  #{meltgc_append_list((melt_ptr_t)($li), (melt_ptr_t)($el))}#)
+;; prepend into list
+(defprimitive list_prepend (li el) :void
+  :doc #{Safely prepend to list value $LI an element $EL thru a new pair.}#
+  #{meltgc_prepend_list((melt_ptr_t)($li), (melt_ptr_t)($el))}#)
+;; pop first from list
+(defprimitive list_popfirst (li) :value
+  :doc #{Pop the first element from a list $LI and give it, or else null.}#
+  #{(meltgc_popfirst_list((melt_ptr_t)($li)))}#)
+;; make list
+(defprimitive make_list (discr) :value
+  :doc #{Make a new list value of given discriminant $DISCR.}#
+  #{(meltgc_new_list((meltobject_ptr_t)($discr)))}#)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;; PAIR primitives
+;; test
+(defprimitive is_pair (pa) :long
+  :doc #{Test if a value $PA is a pair.}#
+  #{(melt_magic_discr((melt_ptr_t)($pa)) == MELTOBMAG_PAIR)}#)
+;; head
+(defprimitive pair_head (pa) :value
+  :doc #{Safely retrieve the head of pair value $PA or else null.}#
+  #{(melt_pair_head((melt_ptr_t)($pa)))}#)
+;; tail
+(defprimitive pair_tail (pa) :value
+  :doc #{Safely retrieve the tail pair of pair value $PA or else null.}#
+  #{(melt_pair_tail((melt_ptr_t)($pa)))}#)
+
+
+
+
+;; signal a plain warning 
+(defprimitive warningmsg_strv (:cstring cmsg :value strv) :void
+  :doc #{Show a plain warning with raw message string $CMSG and string value $STRV.}#
+  #{warning (0, "MELT WARNING MSG [#%ld]::: %s - %s", melt_dbgcounter, ($cmsg), 
+	       melt_string_str((melt_ptr_t)($strv)))}#
+  )
+
+
+(defprimitive informsg_long (:cstring msg :long n) :void
+  :doc #{Show a plain notice with raw message string $CMSG and number $N.}#
+  #{inform(UNKNOWN_LOCATION, "MELT INFORM [#%ld]: %s * %ld",  melt_dbgcounter, ($msg), ($n))}#
+  )
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;; BUCKETLONGS primitives & iterator
+
+;; test
+(defprimitive is_bucketlong (buck) :long
+  :doc #{Safely test if $BUCK is a bucket associating sorted longs to values.}#
+ #{(melt_magic_discr((melt_ptr_t) ($BUCK)) == MELTOBMAG_BUCKETLONGS)}#)
+
+;; make
+(defprimitive make_bucketlong (discr :long len) :value
+  :doc #{Make a new bucket of discriminant $DISCR and length $LEN - or else nil.}#
+  #{(meltgc_new_longsbucket((meltobject_ptr_t) $DISCR, ($LEN)))}#)
+
+;; get
+(defprimitive bucketlong_get (buck :long key) :value
+  :doc #{Safely retrieve from bucket of longs $BUCK the value, if any, associated to $KEY, or else nil.}#
+  #{melt_longsbucket_get((melt_ptr_t)$BUCK, $KEY)}#)
+
+;; aux
+(defprimitive bucketlong_aux (buck) :value
+  :doc #{Safely retrieve from  bucket of longs $BUCK the auxiliary data value, or else nil.}#
+  #{melt_longsbucket_aux((melt_ptr_t)$BUCK)}#)
+
+
+;; xnum
+(defprimitive bucketlong_xnum (buck) :long
+  :doc #{Safely retrieve from  bucket of longs $BUCK the extra number, or else 0.}#
+  #{melt_longsbucket_xnum ((melt_ptr_t) $BUCK)}#)
+
+;; setxnum
+(defprimitive bucketlong_setxnum (buck :long n) :void
+  :doc #{Safely set in bucket of longs $BUCK the extra number to $N.}#
+  #{melt_longsbucket_set_xnum ((melt_ptr_t) $BUCK, $N)}#)
+
+
+;; setaux
+(defprimitive bucketlong_setaux (buck aux) :void
+  :doc #{Safely set in bucket of longs $BUCK the auxiliary data to $AUX.}#
+  #{meltgc_longsbucket_set_aux ((melt_ptr_t) $BUCK, (melt_ptr_t) $AUX)}#)
+
+
+;; count
+(defprimitive bucketlong_count (buck) :long
+  :doc  #{Safely retrieve from  bucket of longs $BUCK the used count of entries, or else 0.}#
+  #{melt_longsbucket_count ((melt_ptr_t) $BUCK)}#)
+
+;; size
+(defprimitive bucketlong_size (buck) :long
+  :doc  #{Safely retrieve from  bucket of longs $BUCK the allocated size for entries, or else 0.}#
+  #{melt_longsbucket_size ((melt_ptr_t) $BUCK)}#)
+
+
+;; nth key
+(defprimitive bucketlong_nth_key (buck :long N) :long
+  :doc #{Safely retrieve from  bucket of longs $BUCK the $N-th key or else 0}#
+  #{melt_longsbucket_nth_key ((melt_ptr_t) $BUCK, (int)$N)}#)
+
+;; nth value
+(defprimitive bucketlong_nth_val (buck :long N) :value
+  :doc #{Safely retrieve from  bucket of longs $BUCK the $N-th value or else 0}#
+  #{melt_longsbucket_nth_val ((melt_ptr_t) $BUCK,(int)$N)}#)
+
+;; replace
+(defprimitive bucketlong_replace (buck :long key :value val) :value
+  :doc #{Safely replace in bucket of longs $BUCK a given $KEY associated to $VAL. 
+  Don't change $BUCK if $KEY wasn't found. Return former value, or else nil.}#
+  #{meltgc_longsbucket_replace ((melt_ptr_t) $BUCK, ($KEY), (melt_ptr_t) $VAL)}#)
+
+
+
+;; put
+(defprimitive bucketlong_put (buck :long key :value val) :value
+  :doc #{Safely put in bucket of longs $BUCK a given $KEY associated
+  to $VAL. Return the bucket, or a grown one on successful put, nil
+  otherwise.}#
+  #{meltgc_longsbucket_put ((melt_ptr_t) $BUCK, ($KEY), (melt_ptr_t) $VAL)}#
+)
+
+;; remove
+(defprimitive bucketlong_remove (buck :long key) :value
+  :doc #{Safely remove in bucket of longs $BUCK a given $KEY. Return
+  the bucket, or a shrinked one on successful remove, nil otherwise.}#
+  #{meltgc_longsbucket_remove ((melt_ptr_t) $BUCK, ($KEY))}#)
+
+
+;; iterator
+(defciterator foreach_in_bucketlong
+  (:value buck)
+  eachbucklong
+  (:long key :value val)
+  ;;
+  :doc #{The $FOREACH_IN_BUCKETLONG c-iterator safely iterates inside
+  given bucket of longs $BUCK, retrieving each key $KEY in ascending
+  order and value $VAL. The bucket should not change inside the
+  iterator's body.}#
+  ;; before
+  #{ /*foreach_in_bucketlong $EACHBUCKLONG*/ unsigned $EACHBUCKLONG#_ix = 0, $EACHBUCKLONG#_cnt =0;
+  $KEY = 0L;
+  $VAL = NULL;
+  for ($EACHBUCKLONG#_ix = 0;
+       /* retrieve in $EACHBUCKLONG iteration the count, it might change! */
+       ($EACHBUCKLONG#_cnt = melt_longsbucket_count ((melt_ptr_t) $BUCK)) > 0
+       && $EACHBUCKLONG#_ix < $EACHBUCKLONG#_cnt;
+       $EACHBUCKLONG#_ix++) {
+     $KEY = 0L;
+     $VAL = NULL;
+     { 
+       struct melt_bucketlongentry_st* $EACHBUCKLONG#_buent
+         = ((struct meltbucketlongs_st*)$BUCK)->buckl_entab + $EACHBUCKLONG#_ix;
+       if (!$EACHBUCKLONG#_buent->ebl_va) 
+         continue;
+       $KEY = $EACHBUCKLONG#_buent->ebl_at;
+       $VAL = $EACHBUCKLONG#_buent->ebl_va;
+       $EACHBUCKLONG#_buent = NULL;
+     }
+     /*foreach_in_bucketlong $EACHBUCKLONG body:*/
+  }#
+  ;; after
+  #{ /* ending foreach_in_bucketlong $EACHBUCKLONG*/
+     $KEY = 0L;
+     $VAL = NULL; 
+  } /* end foreach_in_bucketlong $EACHBUCKLONG#_ix */
+  }#)
+   
+     
+;; reverse iterator
+(defciterator foreach_in_bucketlong_backward
+  (:value buck)
+  reveachbucklong
+  (:long key :value val)
+  ;;
+  :doc #{The $FOREAC_IN_BUCKETLONG_BACKWARD c-iterator safely
+  reverse-iterates inside given bucket of longs $BUCK, retrieving each
+  key $KEY in descending order and value $VAL. The bucket should not
+  change inside the iterator's body.}#
+  ;; before
+  #{ /*foreach_in_bucketlong_backward $REVEACHBUCKLONG*/ int $REVEACHBUCKLONG#_ix = 0;
+  $KEY = 0L;
+  $VAL = NULL;
+  for ($REVEACHBUCKLONG#_ix = ((int) melt_longsbucket_count ((melt_ptr_t) $BUCK)) -1; 
+       $REVEACHBUCKLONG#_ix >= 0;
+       $REVEACHBUCKLONG#_ix--) {
+     $KEY = 0L;
+     $VAL = NULL;
+     { 
+       struct melt_bucketlongentry_st* $REVEACHBUCKLONG#_buent
+         = ((struct meltbucketlongs_st*)$BUCK)->buckl_entab + $REVEACHBUCKLONG#_ix;
+       if (!$REVEACHBUCKLONG#_buent->ebl_va) 
+         continue;
+       $KEY = $REVEACHBUCKLONG#_buent->ebl_at;
+       $VAL = $REVEACHBUCKLONG#_buent->ebl_va;
+       $REVEACHBUCKLONG#_buent = NULL;
+     }
+     /*foreach_in_bucketlong_backward $REVEACHBUCKLONG body:*/
+  }#
+  ;; after
+  #{ /* ending foreach_in_bucketlong_backward $REVEACHBUCKLONG*/
+     $KEY = 0L;
+     $VAL = NULL; 
+  } /* end foreach_in_bucketlong_backward $REVEACHBUCKLONG#_ix */
+  }#)
+   
+     
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;; the discriminant for name strings
+(definstance discr_name_string class_discriminant
+  :predef DISCR_NAME_STRING
+  :obj_num MELTOBMAG_STRING
+  :doc #{The $DISCR_NAME_STRING is the discriminant of name strings, such as the $NAMED_NAME of symbols.}#
+;;; :named_name '"DISCR_NAME_STRING"
+;;; :disc_super discr_string   ;; forward reference not allowed
+  )
+
+;;; the discriminant for strings
+(definstance discr_string class_discriminant
+  :predef DISCR_STRING
+  :obj_num MELTOBMAG_STRING
+  :doc #{The $DISCR_STRING is the discriminant of strings. See also
+$DISCR_NAME_STRING and $DISCR_VERBATIM_STRING.}#
+  :named_name '"DISCR_STRING")
+
+(unsafe_put_fields discr_name_string :disc_super discr_string)
+(unsafe_put_fields discr_name_string :named_name
+		   '"DISCR_NAME_STRING")
+;;; the discriminant for verbatim strings (used for defprimitive)
+(definstance discr_verbatim_string class_discriminant
+  :obj_num MELTOBMAG_STRING
+  :predef DISCR_VERBATIM_STRING
+  :doc #{The $DISCR_VERBATIM_STRING is the discriminant of verbatim strings. See also $DISCR_STRING.}#
+  :named_name '"DISCR_VERBATIM_STRING"
+  :disc_super discr_string
+  )
+
+;;; the discriminant for any receiver (used for sending to everything)
+(definstance discr_any_receiver class_discriminant
+  :doc #{The $DISCR_ANY_RECEIVER is the topmost discriminant of any value. 
+See also $CTYPE_VALUE.}#
+  :predef DISCR_ANY_RECEIVER
+  :named_name '"DISCR_ANY_RECEIVER"
+  )
+
+(unsafe_put_fields discr_string :disc_super discr_any_receiver)
+(unsafe_put_fields class_root :disc_super discr_any_receiver)
+
+;;; the discriminant for null receiver (used for sending to nil)
+(definstance discr_null_receiver class_discriminant
+  :doc #{The $DISCR_NULL_RECEIVER is the discriminant of the nil value, handling messages sent to nil.}#
+  :predef DISCR_NULL_RECEIVER
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_NULL_RECEIVER")
+
+;;; the discriminant for strbuf
+(definstance discr_strbuf class_discriminant
+  :doc #{The $DISCR_STRBUF is the discriminant of string buffer values.}#
+  :predef DISCR_STRBUF
+  :obj_num MELTOBMAG_STRBUF  
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_STRBUF")
+
+;;; the discriminant for integers
+(definstance discr_integer class_discriminant
+  :doc #{The $DISCR_INTEGER is the discriminant of boxed integers. See also $CTYPE_LONG.}#
+  :predef DISCR_INTEGER
+  :obj_num MELTOBMAG_INT 
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_INTEGER")
+
+;;; The discriminant for boxed reals.
+(definstance discr_real class_discriminant
+  :doc #{The $DISCR_REAL is the discriminant of boxed reals. }#
+  :predef DISCR_REAL
+  :obj_num MELTOBMAG_REAL
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_REAL")
+
+;;; the discriminant for constant integers, like '123
+(definstance discr_constant_integer class_discriminant
+  :predef DISCR_CONSTANT_INTEGER
+  :obj_num MELTOBMAG_INT
+  :disc_super discr_integer
+  :named_name '"DISCR_CONSTANT_INTEGER"
+  :doc #{The $DISCR_CONSTANT_INTEGER is the discriminant for constant
+integer values, in particular those obtained by quoting an
+integer. The number inside is constant and remains unchanged by
+$PUT_INT. See also $DISCR_INTEGER.}# )
+
+;;; the discriminant for lists
+(definstance discr_list class_discriminant
+  :doc #{The $DISCR_LIST is the discriminant of list values, made of pairs. See also $DISCR_PAIR.}#
+  :predef DISCR_LIST
+  :obj_num MELTOBMAG_LIST 
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_LIST")
+
+;;; the discriminant for pairs
+(definstance discr_pair class_discriminant
+  :doc #{The $DISCR_PAIR is the discriminant of pairs, notably inside lists. See also $DISCR_LIST.}#
+  :predef DISCR_PAIR
+  :obj_num MELTOBMAG_PAIR 
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_PAIR")
+
+;;; the discriminant for multiples
+(definstance discr_multiple class_discriminant
+  :doc #{The $DISCR_MULTIPLE is the discriminant of multiple values,
+i.e. tuples.  See also $DISCR_FIELD_SEQUENCE, $DISCR_CLASS_SEQUENCE,
+$DISCR_FORMAL_SEQUENCE, $DISCR_VARIADIC_FORMAL_SEQUENCE.}#
+  :predef DISCR_MULTIPLE
+  :obj_num MELTOBMAG_MULTIPLE
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_MULTIPLE")
+
+;;; the discriminant for sequence of fields
+(definstance discr_field_sequence class_discriminant
+  :doc #{The $DISCR_FIELD_SEQUENCE is the discriminant of field
+sequence tuple values, e.g. within classes. See also $DISCR_MULTIPLE
+and $CLASS_CLASS.}#
+  :predef DISCR_FIELD_SEQUENCE
+  :obj_num MELTOBMAG_MULTIPLE
+  :named_name '"DISCR_FIELD_SEQUENCE"
+  :disc_super discr_multiple
+  )
+
+;;; the discriminant for sequence of formals binding
+(definstance discr_formal_sequence class_discriminant
+  :doc #{The $DISCR_FORMAL_SEQUENCE is the discriminant of formal bindings
+sequence tuples. See also $DISCR_MULTIPLE
+and $DISCR_VARIADIC_FORMAL_SEQUENCE.}#
+  :obj_num MELTOBMAG_MULTIPLE
+  :named_name '"DISCR_FORMAL_SEQUENCE"
+  :disc_super discr_multiple
+  )
+
+
+;;; the discriminant for sequence of variadic formals binding
+(definstance discr_variadic_formal_sequence class_discriminant
+  :doc #{The $DISCR_VARIADIC_FORMAL_SEQUENCE is the discriminant of formal bindings
+sequence tuples. See also $DISCR_MULTIPLE
+and $DISCR_FORMALS_SEQUENCE.}#
+  :obj_num MELTOBMAG_MULTIPLE
+  :named_name '"DISCR_VARIADIC_FORMAL_SEQUENCE"
+  :disc_super discr_formal_sequence
+  )
+
+
+;;; the discriminant for tree-s
+(definstance discr_tree class_discriminant
+  :doc #{The $DISCR_TREE is the discriminant of boxed GCC tree values. See also $CTYPE_TREE.}#
+  :predef DISCR_TREE
+  :obj_num MELTOBMAG_TREE
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_TREE")
+
+(definstance discr_constant_tree class_discriminant
+  :doc #{The $DISCR_CONSTANT_TREE is the discriminant of constnant
+  boxed GCC tree values. See also $CTYPE_TREE and $DISCR_TREE.}#
+  :obj_num MELTOBMAG_TREE
+  :predef DISCR_CONSTANT_TREE
+  :disc_super discr_tree
+  :named_name '"DISCR_CONSTANT_TREE")
+
+;;; the discriminant for gimple-s
+(definstance discr_gimple class_discriminant
+  :doc #{The $DISCR_GIMPLE is the discriminant of boxed GCC gimple values. See also $CTYPE_GIMPLE.}#
+  :predef DISCR_GIMPLE
+  :obj_num MELTOBMAG_GIMPLE
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_GIMPLE")
+
+(definstance discr_constant_gimple class_discriminant
+  :doc #{The $DISCR_CONSTANT_GIMPLE is the discriminant of
+  constant boxed GCC gimple values. See also $CTYPE_GIMPLE and
+  $DISCR_GIMPLE.}#
+  :predef DISCR_CONSTANT_GIMPLE
+  :obj_num MELTOBMAG_GIMPLE
+  :disc_super discr_gimple
+  :named_name '"DISCR_CONSTANT_GIMPLE")
+
+;;; the discriminant for gimple_seq-s
+(definstance discr_gimple_seq class_discriminant
+  :doc #{The $DISCR_GIMPLE_SEQ is the discriminant of boxed GCC gimple_seq values. See also $CTYPE_GIMPLE_SEQ.}#
+  :predef DISCR_GIMPLE_SEQ
+  :obj_num MELTOBMAG_GIMPLESEQ
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_GIMPLE_SEQ")
+
+(definstance discr_constant_gimple_seq class_discriminant
+  :doc #{The $DISCR_CONSTANT_GIMPLE_SEQ is the discriminant of
+  constant boxed GCC gimple_seq values. See also $CTYPE_GIMPLE_SEQ and
+  $DISCR_GIMPLE_SEQ.}#
+  :predef DISCR_CONSTANT_GIMPLE_SEQ
+  :obj_num MELTOBMAG_GIMPLESEQ
+  :disc_super discr_gimple_seq
+  :named_name '"DISCR_CONSTANT_GIMPLE_SEQ")
+
+
+;;; the discriminant for edges
+(definstance discr_edge class_discriminant
+  :doc #{The $DISCR_EDGE is the discriminant of boxed GCC edge values. See also $CTYPE_EDGE.}#
+  :predef DISCR_EDGE
+  :obj_num MELTOBMAG_EDGE
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_EDGE")
+
+(definstance discr_constant_edge class_discriminant
+  :doc #{The $DISCR_CONSTANT_EDGE is the discriminant of
+  constant boxed GCC edge values. See also $CTYPE_EDGE and
+  $DISCR_EDGE.}#
+  :predef DISCR_CONSTANT_EDGE
+  :obj_num MELTOBMAG_EDGE
+  :disc_super discr_edge
+  :named_name '"DISCR_CONSTANT_EDGE")
+
+
+;;; the discriminant for boxed basic blocks
+(definstance discr_basic_block class_discriminant
+  :doc #{The $DISCR_BASIC_BLOCK is the discriminant of boxed GCC basic_block values. See
+also $CTYPE_BASIC_BLOCK.}#
+  :predef DISCR_BASIC_BLOCK
+  :obj_num MELTOBMAG_BASICBLOCK
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_BASIC_BLOCK")
+
+(definstance discr_constant_basic_block class_discriminant
+  :doc #{The $DISCR_CONSTANT_BASIC_BLOCK is the discriminant of
+  constant boxed GCC basic_block values. See also $CTYPE_BASIC_BLOCK and
+  $DISCR_BASIC_BLOCK.}#
+  :predef DISCR_CONSTANT_BASIC_BLOCK
+  :obj_num MELTOBMAG_BASICBLOCK
+  :disc_super discr_basic_block
+  :named_name '"DISCR_CONSTANT_BASIC_BLOCK")
+
+
+;;; the discriminant for boxed loops
+(definstance discr_loop class_discriminant
+  :doc #{The $DISCR_LOOP is the discriminant of boxed GCC loop_p values. See
+also $CTYPE_LOOP.}#
+  :predef DISCR_LOOP
+  :obj_num MELTOBMAG_LOOP
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_LOOP")
+
+(definstance discr_constant_loop class_discriminant
+  :doc #{The $DISCR_CONSTANT_LOOP is the discriminant of
+  constant boxed GCC loop values. See also $CTYPE_LOOP and
+  $DISCR_LOOP.}#
+  :predef DISCR_CONSTANT_LOOP
+  :obj_num MELTOBMAG_LOOP
+  :disc_super discr_loop
+  :named_name '"DISCR_CONSTANT_LOOP")
+
+;;; the discriminant for boxed bitmap-s
+(definstance discr_bitmap class_discriminant
+  :doc #{The $DISCR_BITMAP is the discriminant of boxed GCC bitmap values. See
+also $CTYPE_BITMAP.}#
+  :predef DISCR_BITMAP
+  :obj_num MELTOBMAG_BITMAP
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_BITMAP")
+
+
+;;; the discriminant for boxed rtx-s
+(definstance discr_rtx class_discriminant
+  :doc #{The $DISCR_RTX is the discriminant of boxed GCC rtx values. See
+also $CTYPE_RTX.}#
+  :predef DISCR_RTX
+  :obj_num MELTOBMAG_RTX
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_RTX")
+
+;;; the discriminant for boxed rtvec-s
+(definstance discr_rtvec class_discriminant
+  :doc #{The $DISCR_RTVEC is the discriminant of boxed GCC rtvec values. See
+also $CTYPE_RTVEC.}#
+  :predef DISCR_RTVEC
+  :obj_num MELTOBMAG_RTVEC
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_RTVEC")
+
+;;; the discriminant for buckets associating longs to values
+(definstance discr_bucket_longs class_discriminant
+  :doc #{The $DISCR_BUCKET_LONGS is the discriminant of buckets for
+  dichotomial mapping of longs to non-nil values. See $VALDESCR_BUCKETLONGS.}#
+  :predef DISCR_BUCKET_LONGS
+  :obj_num MELTOBMAG_BUCKETLONGS
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_BUCKET_LONGS")
+
+;;; the discriminant for maps of objects
+(definstance discr_map_objects class_discriminant
+  :doc #{The $DISCR_MAP_OBJECTS is the discriminant of hash-map values associating MELT objects to
+non-nil value.}#
+  :predef DISCR_MAP_OBJECTS
+  :obj_num MELTOBMAG_MAPOBJECTS
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_MAP_OBJECTS")
+
+;;; the discriminant for maps of strings
+(definstance discr_map_strings class_discriminant
+  :doc #{The $DISCR_MAP_STRINGS is the discriminant of hash-map values associating raw strings to 
+non-nil value. See also $CTYPE_CSTRING.}#
+  :predef DISCR_MAP_STRINGS
+  :obj_num MELTOBMAG_MAPSTRINGS
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_MAP_STRINGS")
+
+;;; the discriminant for maps of tree-s
+(definstance discr_map_trees class_discriminant
+  :doc #{The $DISCR_MAP_TREES is the discriminant of hash-map values associating raw GCC tree-s
+to non-nil value. See also $CTYPE_TREE.}#
+  :predef DISCR_MAP_TREES
+  :obj_num MELTOBMAG_MAPTREES
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_MAP_TREES")
+
+;;; the discriminant for maps of gimple-s
+(definstance discr_map_gimples class_discriminant
+  :doc #{The $DISCR_MAP_GIMPLES is the discriminant of hash-map values associating raw GCC gimple-s 
+to non-nil value. See also $CTYPE_GIMPLE.}#
+  :predef DISCR_MAP_GIMPLES
+  :obj_num MELTOBMAG_MAPGIMPLES
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_MAP_GIMPLES")
+
+;;; the discriminant for maps of gimple_seq-s
+(definstance discr_map_gimple_seqs class_discriminant
+  :doc #{The $DISCR_MAP_GIMPLE_SEQS is the discriminant of hash-map values associating raw GCC gimple_seq-s 
+to non-nil value. See also $CTYPE_GIMPLE_SEQ.}#
+  :predef DISCR_MAP_GIMPLE_SEQS
+  :obj_num MELTOBMAG_MAPGIMPLESEQS
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_MAP_GIMPLE_SEQS")
+
+
+;;; the discriminant for maps of edges
+(definstance discr_map_edges class_discriminant
+  :doc #{The $DISCR_MAP_EDGES is the discriminant of hash-map values associating raw GCC edge-s 
+to non-nil values. See also $CTYPE_EDGE.}#
+  :predef DISCR_MAP_EDGES
+  :obj_num MELTOBMAG_MAPEDGES
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_MAP_EDGES")
+
+;;; the discriminant for maps of basic_blocks
+(definstance discr_map_basic_blocks class_discriminant
+  :doc #{The $DISCR_MAP_BASIC_BLOCKS is the discriminant of hash-map values associating raw GCC basic_block-s 
+to non-nil values. See also $CTYPE_BASIC_BLOCK.}#
+  :predef DISCR_MAP_BASIC_BLOCKS
+  :obj_num MELTOBMAG_MAPBASICBLOCKS
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_MAP_BASIC_BLOCKS")
+
+;;; the discriminant for maps of loop-s
+(definstance discr_map_loops class_discriminant
+  :doc #{The $DISCR_MAP_LOOPS is the discriminant of hash-map values associating raw GCC loop-s 
+to non-nil values. See also $CTYPE_LOOP.}#
+  :predef DISCR_MAP_LOOPS
+  :obj_num MELTOBMAG_MAPLOOPS
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_MAP_LOOPS")
+
+;;; the discriminant for maps of bitmap-s
+(definstance discr_map_bitmaps class_discriminant
+  :doc #{The $DISCR_MAP_BITMAPS is the discriminant of hash-map values associating raw GCC bitmap-s 
+to non-nil values. See also $CTYPE_BITMAP.}#
+  :predef DISCR_MAP_BITMAPS
+  :obj_num MELTOBMAG_MAPBITMAPS
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_MAP_BITMAPS")
+
+;;; the discriminant for maps of rtx-s
+(definstance discr_map_rtxs class_discriminant
+  :doc #{The $DISCR_MAP_RTXS is the discriminant of hash-map values associating raw GCC rtx-s 
+to non-nil values. See also $CTYPE_RTX.}#
+  :predef DISCR_MAP_RTXS
+  :obj_num MELTOBMAG_MAPRTXS
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_MAP_RTXS")
+
+;;; the discriminant for maps of rtvec-s
+(definstance discr_map_rtvecs class_discriminant
+  :doc #{The $DISCR_MAP_RTVECS is the discriminant of hash-map values associating raw GCC rtvec-s 
+to non-nil values. See also $CTYPE_RTVEC.}#
+  :predef DISCR_MAP_RTVECS
+  :obj_num MELTOBMAG_MAPRTVECS
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_MAP_RTVECS")
+
+
+
+
+;;; the discriminant for files [closed by the garbage collector] 
+(definstance discr_file class_discriminant
+  :obj_num MELTOBMAG_SPECIAL_DATA
+  :predef DISCR_FILE
+  :doc #{The $DISCR_FILE is the discriminant of boxed FILE*, which are fclose-d when the 
+boxed value is inaccessible. See also $DISCR_RAWFILE.}#
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_FILE"
+  )
+
+;; the discrimiant for raw files [not closed implicitly] 
+(definstance discr_rawfile class_discriminant
+  :doc #{The $DISCR_RAWFILE is the discriminant of boxed FILE*, The MELT garbage collector dont
+fclose them. See also $DISCR_FILE.}#
+  :obj_num MELTOBMAG_SPECIAL_DATA
+  :predef DISCR_RAWFILE
+  :disc_super discr_file
+  :named_name '"DISCR_RAWFILE"
+  )
+
+
+;;; the discriminant for sequence of classes 
+(definstance discr_class_sequence class_discriminant
+  :doc #{The $DISCR_CLASS_SEQUENCE is the discriminant of class sequence tuple values, e.g. inside classes. 
+See also $CLASS_CLASS and $DISCR_MULTIPLE.}#
+  :predef DISCR_CLASS_SEQUENCE
+  :obj_num MELTOBMAG_MULTIPLE
+  :named_name '"DISCR_CLASS_SEQUENCE"
+  :disc_super discr_multiple
+  )
+
+
+;;; the discriminant for method dictionnary maps
+(definstance discr_method_map class_discriminant
+  :doc #{The $DISCR_METHOD_MAP is the discriminant of method
+dictionnary maps, associating selector values to closure value. See
+also $CLASS_CLASS, $CLASS_SELECTOR, $DISCR_CLOSURE and
+$DISCR_MAP_OBJECTS.}#
+  :predef DISCR_METHOD_MAP
+  :obj_num MELTOBMAG_MAPOBJECTS
+  :disc_super discr_map_objects
+  :named_name '"DISCR_METHOD_MAP")
+
+;;; the discriminant for charcode integers
+(definstance discr_character_integer class_discriminant
+  :doc #{The $DISCR_CHARACTER_INTEGER is the discriminant of 'character' boxed integer values. 
+See also $DISCR_INTEGER.}#
+  :predef DISCR_CHARACTER_INTEGER
+  :obj_num MELTOBMAG_INT
+  :named_name '"DISCR_CHARACTER_INTEGER"
+  :disc_super discr_integer
+  )
+
+
+;;; the discriminant for mixedintegers
+(definstance discr_mixed_integer class_discriminant
+  :doc #{The $DISCR_MIXED_INTEGER is the discriminant of mixed integer values, 
+containing both a number and a value component.}#
+  :predef DISCR_MIXED_INTEGER
+  :obj_num MELTOBMAG_MIXINT
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_MIXED_INTEGER")
+
+
+;;; the discriminant for mixedintegers
+(definstance discr_mixed_bigint class_discriminant
+  :doc #{The $DISCR_MIXED_BIGINT is the discriminant of mixed bigint values, 
+containing both a GMP number and a value component.}#
+  :predef DISCR_MIXED_BIGINT
+  :obj_num MELTOBMAG_MIXBIGINT
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_MIXED_BIGINT")
+
+
+
+;;; the discriminant for mixed locations
+(definstance discr_mixed_location class_discriminant
+  :doc #{The $DISCR_MIXED_LOCATION is the discriminant of mixed location values, 
+containing both a GCC location and a value component.}#
+  :predef DISCR_MIXED_LOCATION
+  :obj_num MELTOBMAG_MIXLOC
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_MIXED_LOCATION")
+
+
+;;; the discriminant for closures
+(definstance discr_closure class_discriminant
+  :doc #{The $DISCR_CLOSURE is the discriminant of MELT function closures, i.e. functional values. 
+See also $DISCR_ROUTINE.}#
+  :predef DISCR_CLOSURE
+  :obj_num MELTOBMAG_CLOSURE
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_CLOSURE")
+
+;;; the discriminant for macro closures
+(definstance discr_macro_closure class_discriminant
+  :doc #{The $DISCR_MACRO_CLOSURE is the discriminant of MELT macro closures,
+See also $DISCR_ROUTINE and $DISCR_CLOSURE.}#
+  :predef DISCR_MACRO_CLOSURE
+  :obj_num MELTOBMAG_CLOSURE
+  :disc_super discr_closure
+  :named_name '"DISCR_MACRO_CLOSURE")
+
+;;; the discriminant for routines
+(definstance discr_routine class_discriminant
+  :doc #{The $DISCR_ROUTINE is the discriminant of MELT routine values, which boxes 
+the routine pointer and the constants inside MELT function closure values. See also $DISCR_CLOSURE.}#
+  :predef DISCR_ROUTINE
+  :obj_num MELTOBMAG_ROUTINE
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_ROUTINE")
+
+;;; the discriminant for hooks
+(definstance discr_hook class_discriminant
+  :doc #{The $DISCR_HOOK is the discriminant of MELT hook values, which boxes 
+the hooks called from C or C++ code, notably the MELT runtime.}#
+  :predef DISCR_HOOK
+  :obj_num MELTOBMAG_HOOK
+  :disc_super discr_any_receiver
+  :named_name '"DISCR_HOOK")
+
+
+(definstance container_ctype_gty_dict class_reference
+  :referenced_value (make_mapstring discr_map_strings 60))
+
+(definstance container_ctype_dict class_reference
+  :referenced_value (make_mapstring discr_map_strings 60))
+
+;;; by having the install_ctype_descr called inside each ctype
+;;; initialization, we are sure it is called once for each, because
+;;; ctype-s are predefined
+(defun install_ctype_descr (ctyp :cstring descr)
+  :doc #{Install a new ctype $CTYP with descriptive string $DESCR. 
+Also add the ctype as symbol data in the keyword and the alternate keyword if provided.}#
+  (if (is_not_a ctyp class_ctype)
+      (code_chunk invalidctype 
+		  #{/*$INVALIDCTYPE*/error("MELT invalid ctype: %s", $DESCR);
+      }#)
+      )
+  (assert_msg "check ctyp" (is_a ctyp class_ctype) ctyp) 
+  (if (unsafe_get_field :ctype_descr ctyp)
+      (return))
+  (let ( (ckw (get_field :ctype_keyword ctyp)) 
+	 (altkw (get_field :ctype_altkeyword ctyp)) 
+	 (ds (make_stringconst discr_string descr))
+	 )
+    (assert_msg "check ctype ckw" (is_a ckw class_keyword) ckw)
+    (unsafe_put_fields ckw :symb_data ctyp)
+    (if (is_a altkw class_keyword)
+	(put_fields altkw :symb_data ctyp))
+    (mapstring_putstr (get_field :referenced_value container_ctype_dict)
+		      (get_field :named_name ckw)
+		      ctyp)
+    (if (is_a ctyp class_ctype_gty)
+	(mapstring_putstr (get_field :referenced_value container_ctype_gty_dict)
+			  (get_field :named_name ckw)
+			  ctyp))
+    ds
+    ))
+
+;;; citerator on pairs
+(defciterator foreach_pair
+  (start_pair) ;start formals 
+  eachpair ;state
+  (curpair curcomp) ;local formals
+  :doc #{The $FOREACH_PAIR iterator scan pairs starting from $START_PAIR. Local formals are $CURPAIR,
+  bound to the current pair, and $CURCOMP, bound to the current component within
+  the pair.}#
+   #{/* start foreach_pair $EACHPAIR */
+   for ($CURPAIR = $START_PAIR;
+	melt_magic_discr((melt_ptr_t) $CURPAIR) == MELTOBMAG_PAIR;
+        $CURPAIR = melt_pair_tail((melt_ptr_t) $CURPAIR)) {
+	$CURCOMP = melt_pair_head((melt_ptr_t) $CURPAIR); 
+   }#
+   
+   #{ } /* ending  foreach_pair $EACHPAIR */
+   $CURPAIR = NULL;
+   $CURCOMP = NULL;
+   }#
+)
+
+;;; citerator on lists
+(defciterator foreach_pair_component_in_list 
+  (lis)					;start formals 
+  eachlist				;state
+  (curpair curcomp)			;local formals
+  :doc #{The $FOREACH_PAIR_COMPONENT_IN_LIST iterator goes within a list, given by
+the start formal $LIS. Local formals are $CURPAIR, bound to the
+current pair, and $CURCOMP, bound to the current component within the
+list.}#
+   #{/* start foreach_pair_component_in_list $EACHLIST */
+   for ($CURPAIR = melt_list_first( (melt_ptr_t)$LIS);
+	melt_magic_discr((melt_ptr_t) $curpair) == MELTOBMAG_PAIR;
+        $CURPAIR = melt_pair_tail((melt_ptr_t) $CURPAIR)) {
+	$CURCOMP = melt_pair_head((melt_ptr_t) $CURPAIR); }#
+   #{ } /* end foreach_pair_component_in_list $EACHLIST */
+     $CURPAIR = NULL;
+     $CURCOMP = NULL;
+   }#
+)
+
+
+
+;;; every ctype should be predefined. normexp_defprimitive requires this
+;;; while predef are somehow costly, we don't have that much many ctype-s
+;;; and each of them nearly requires some code in melt-runtime.h
+;;; which should be enhanced for any new ctype
+;; the C type for values
+(definstance ctype_value class_ctype_plain
+  :doc #{The $CTYPE_VALUE is the c-type of any MELT value. See also $DISCR_ANY_RECEIVER, $CLASS_ROOT etc. Keyword is :value.}#
+  :predef CTYPE_VALUE
+  :named_name  '"CTYPE_VALUE"
+  :ctype_keyword ':value
+  :ctype_cname  '"melt_ptr_t"
+  :ctype_parchar '"MELTBPAR_PTR"
+  :ctype_parstring '"MELTBPARSTR_PTR"
+  ;; value have to be passed specially, we need to pass the address of the pointer
+  :ctype_argfield '"meltbp_vptr"
+  :ctype_resfield '"meltbp_aptr"
+  :ctype_marker '"gt_ggc_mx_melt_un"
+  ;; we don't have any boxing or unboxing chunks
+  :ctypp_boxing ()
+  :ctypp_unboxing ()
+  )
+(install_ctype_descr ctype_value "any melt value pointer")
+
+
+;;;;;;;;;;;;;;;;
+;; the C type for long
+(definstance ctype_long class_ctype_plain
+  :doc #{The $CTYPE_LONG is the c-type of raw long number stuff.
+ See also $DISCR_INTEGER. Keyword is :long.}#
+  :predef CTYPE_LONG
+  :named_name  '"CTYPE_LONG"
+  :ctype_keyword ':long
+  :ctype_cname  '"long"
+  :ctype_parchar '"MELTBPAR_LONG"
+  :ctype_parstring '"MELTBPARSTR_LONG"
+  :ctype_argfield '"meltbp_long"
+  :ctype_resfield '"meltbp_longptr"
+  :ctype_autoboxdiscr discr_integer
+  :ctype_autoconstboxdiscr discr_constant_integer
+  :ctypp_boxing '"/*boxing ctype_long*/ meltgc_new_int"
+  :ctypp_unboxing '"/*unboxing ctype_long*/ melt_get_int"
+  )
+(install_ctype_descr ctype_long "C long unboxed integer")
+
+;; the C type for gcc trees
+(definstance ctype_tree class_ctype_gty
+  :doc #{The $CTYPE_TREE is the c-type of raw GCC tree stuff. See also $DISCR_TREE. Keyword is :tree.}#
+  :predef CTYPE_TREE
+  :named_name  '"CTYPE_TREE"
+  :ctype_keyword ':tree
+  :ctype_cname  '"tree"
+  :ctype_parchar '"MELTBPAR_TREE"
+  :ctype_parstring '"MELTBPARSTR_TREE"
+  :ctype_argfield '"meltbp_tree"
+  :ctype_resfield '"meltbp_treeptr"
+  :ctype_marker '"gt_ggc_mx_tree_node"
+  :ctype_autoboxdiscr discr_tree
+  :ctype_autoconstboxdiscr discr_constant_tree
+;; GTY ctype
+  :ctypg_boxedmagic '"MELTOBMAG_TREE"
+  :ctypg_mapmagic '"MELTOBMAG_MAPTREES"
+  :ctypg_boxedstruct '"melttree_st"
+  :ctypg_boxedunimemb '"u_tree"
+  :ctypg_entrystruct '"entrytreemelt_st"
+  :ctypg_mapstruct '"meltmaptrees_st"
+  ;; :ctypg_boxdiscr  discr_tree
+  :ctypg_mapdiscr  discr_map_trees
+  :ctypg_mapunimemb    '"u_maptrees"
+  :ctypg_boxfun        '"meltgc_new_tree"
+  :ctypg_unboxfun      '"melt_tree_content"
+  :ctypg_updateboxfun  '"meltgc_tree_updatebox"
+  :ctypg_newmapfun     '"meltgc_new_maptrees"
+  :ctypg_mapgetfun     '"melt_get_maptrees"
+  :ctypg_mapputfun     '"melt_put_maptrees"
+  :ctypg_mapremovefun  '"melt_remove_maptrees"
+  :ctypg_mapcountfun   '"melt_count_maptrees"
+  :ctypg_mapsizefun    '"melt_size_maptrees"
+  :ctypg_mapnattfun    '"melt_nthattr_maptrees"
+  :ctypg_mapnvalfun    '"melt_nthval_maptrees"	
+  :ctypg_mapauxdatafun     '"melt_auxdata_maptrees"
+  :ctypg_mapauxputfun     '"melt_auxput_maptrees"
+  )
+(install_ctype_descr ctype_tree "GCC tree pointer")
+
+;; the C type for gcc gimples
+(definstance ctype_gimple class_ctype_gty
+  :doc #{The $CTYPE_GIMPLE is the c-type of raw GCC gimple stuff. See also $DISCR_GIMPLE. Keyword is :gimple.}#
+  :predef CTYPE_GIMPLE
+  :named_name  '"CTYPE_GIMPLE"
+  :ctype_keyword ':gimple
+  :ctype_cname '"gimple"
+  :ctype_parchar '"MELTBPAR_GIMPLE"
+  :ctype_parstring '"MELTBPARSTR_GIMPLE"
+  :ctype_argfield '"meltbp_gimple"
+  :ctype_resfield '"meltbp_gimpleptr"
+  :ctype_marker '"gt_ggc_mx_gimple_statement_d"
+  :ctype_autoboxdiscr discr_gimple
+  :ctype_autoconstboxdiscr discr_constant_gimple
+;; GTY ctype
+  :ctypg_boxedmagic      '"MELTOBMAG_GIMPLE"
+  :ctypg_mapmagic        '"MELTOBMAG_MAPGIMPLES"
+  :ctypg_boxedstruct     '"meltgimple_st"
+  :ctypg_boxedunimemb    '"u_gimple"
+  :ctypg_entrystruct     '"entrygimplemelt_st"
+  :ctypg_mapstruct       '"meltmapgimples_st"
+  ;; :ctypg_boxdiscr        discr_gimple
+  :ctypg_mapdiscr        discr_map_gimples
+  :ctypg_mapunimemb    	 '"u_mapgimples"
+  :ctypg_boxfun        	 '"meltgc_new_gimple"
+  :ctypg_unboxfun      	 '"melt_gimple_content"
+  :ctypg_updateboxfun  	 '"meltgc_gimple_updatebox"
+  :ctypg_newmapfun     	 '"meltgc_new_mapgimples"
+  :ctypg_mapgetfun     	 '"melt_get_mapgimples"
+  :ctypg_mapputfun     	 '"melt_put_mapgimples"
+  :ctypg_mapremovefun  	 '"melt_remove_mapgimples"
+  :ctypg_mapcountfun   	 '"melt_count_mapgimples"
+  :ctypg_mapsizefun    	 '"melt_size_mapgimples"
+  :ctypg_mapnattfun    	 '"melt_nthattr_mapgimples"
+  :ctypg_mapnvalfun    	 '"melt_nthval_mapgimples"
+  :ctypg_mapauxdatafun   '"melt_auxdata_mapgimples"
+  :ctypg_mapauxputfun    '"melt_auxput_mapgimples"	
+  )
+(install_ctype_descr ctype_gimple "GCC gimple pointer")
+
+;; the C type for gcc gimple_seq-s
+(definstance ctype_gimple_seq class_ctype_gty
+  :doc #{The $CTYPE_GIMPLE_SEQ is the c-type of raw GCC gimple_seq stuff. See also $DISCR_GIMPLE_SEQ. 
+Keyword is :gimple_seq.}#
+  :predef CTYPE_GIMPLE_SEQ
+  :named_name  '"CTYPE_GIMPLE_SEQ"
+  :ctype_keyword ':gimple_seq
+  ; :ctype_altkeyword ':gimpleseq
+  :ctype_cname  '"gimple_seq"
+  :ctype_parchar '"MELTBPAR_GIMPLESEQ"
+  :ctype_parstring '"MELTBPARSTR_GIMPLESEQ"
+  :ctype_argfield '"meltbp_gimpleseq"
+  :ctype_resfield '"meltbp_gimpleseqptr"
+  :ctype_marker '"gt_ggc_mx_gimple_seq_d"
+  :ctype_autoboxdiscr discr_gimple_seq
+  :ctype_autoconstboxdiscr discr_constant_gimple_seq
+;; GTY ctype
+  :ctypg_boxedmagic '"MELTOBMAG_GIMPLESEQ"
+  :ctypg_mapmagic '"MELTOBMAG_MAPGIMPLESEQS"
+  :ctypg_boxedstruct '"meltgimpleseq_st"
+  :ctypg_boxedunimemb '"u_gimpleseq"
+  :ctypg_entrystruct '"entrygimpleseqmelt_st"
+  :ctypg_mapstruct '"meltmapgimpleseqs_st"
+  ;; :ctypg_boxdiscr  discr_gimple_seq
+  :ctypg_mapdiscr  discr_map_gimple_seqs
+  :ctypg_mapunimemb    '"u_mapgimpleseqs"	
+  :ctypg_boxfun        '"meltgc_new_gimpleseq"
+  :ctypg_unboxfun      '"melt_gimpleseq_content"
+  :ctypg_updateboxfun  '"meltgc_gimpleseq_updatebox"
+  :ctypg_newmapfun     '"meltgc_new_mapgimpleseqs"
+  :ctypg_mapgetfun     '"melt_get_mapgimpleseqs"
+  :ctypg_mapputfun     '"melt_put_mapgimpleseqs"
+  :ctypg_mapremovefun  '"melt_remove_mapgimpleseqs"
+  :ctypg_mapcountfun   '"melt_count_mapgimpleseqs"
+  :ctypg_mapsizefun    '"melt_size_mapgimpleseqs"
+  :ctypg_mapnattfun    '"melt_nthattr_mapgimpleseqs"
+  :ctypg_mapnvalfun    '"melt_nthval_mapgimpleseqs"
+  :ctypg_mapauxdatafun   '"melt_auxdata_mapgimpleseqs"
+  :ctypg_mapauxputfun    '"melt_auxput_mapgimpleseqs"	
+  )
+(install_ctype_descr ctype_gimple_seq "GCC gimple_seq pointer")
+
+;; the C type for gcc basic_blocks
+(definstance ctype_basic_block class_ctype_gty
+  :doc #{The $CTYPE_BASIC_BLOCK is the c-type of raw GCC basic_block stuff. See also $DISCR_BASIC_BLOCK.
+Keyword is :basic_block.}#
+  :predef CTYPE_BASIC_BLOCK
+  :named_name  '"CTYPE_BASIC_BLOCK"
+  :ctype_keyword ':basic_block
+  ; :ctype_altkeyword ':basicblock
+  :ctype_cname  '"basic_block"
+  :ctype_parchar '"MELTBPAR_BB"
+  :ctype_parstring '"MELTBPARSTR_BB"
+  :ctype_argfield '"meltbp_bb"
+  :ctype_resfield '"meltbp_bbptr"
+  :ctype_marker '"gt_ggc_mx_basic_block_def"
+  :ctype_autoboxdiscr discr_basic_block
+  :ctype_autoconstboxdiscr discr_constant_basic_block
+;; GTY ctype
+  :ctypg_boxedmagic '"MELTOBMAG_BASICBLOCK"
+  :ctypg_mapmagic '"MELTOBMAG_MAPBASICBLOCKS"
+  :ctypg_boxedstruct '"meltbasicblock_st"
+  :ctypg_boxedunimemb '"u_basicblock"
+  :ctypg_entrystruct '"entrybasicblockmelt_st"
+  :ctypg_mapstruct '"meltmapbasicblocks_st"
+  ;; :ctypg_boxdiscr  discr_basic_block
+  :ctypg_mapdiscr  discr_map_basic_blocks
+  :ctypg_mapunimemb    	   '"u_mapbasicblocks"
+  :ctypg_boxfun        	   '"meltgc_new_basicblock"
+  :ctypg_unboxfun      	   '"melt_basicblock_content"
+  :ctypg_updateboxfun  	   '"meltgc_basicblock_updatebox"
+  :ctypg_newmapfun     	   '"meltgc_new_mapbasicblocks"
+  :ctypg_mapgetfun     	   '"melt_get_mapbasicblocks"
+  :ctypg_mapputfun     	   '"melt_put_mapbasicblocks"
+  :ctypg_mapremovefun  	   '"melt_remove_mapbasicblocks"
+  :ctypg_mapcountfun   	   '"melt_count_mapbasicblocks"
+  :ctypg_mapsizefun    	   '"melt_size_mapbasicblocks"
+  :ctypg_mapnattfun    	   '"melt_nthattr_mapbasicblocks"
+  :ctypg_mapnvalfun    	   '"melt_nthval_mapbasicblocks"
+  :ctypg_mapauxdatafun     '"melt_auxdata_mapbasicblocks"
+  :ctypg_mapauxputfun      '"melt_auxput_mapbasicblocks"	
+  )
+(install_ctype_descr ctype_basic_block "GCC basic_block")
+
+;; the C type for gcc edges
+(definstance ctype_edge class_ctype_gty
+  :doc #{The $CTYPE_EDGE is the c-type of raw GCC edge stuff. See also $DISCR_EDGE.
+Keyword is :edge.}#
+  :predef CTYPE_EDGE
+  :named_name  '"CTYPE_EDGE"
+  :ctype_keyword ':edge
+  :ctype_cname '"edge"
+  :ctype_parchar '"MELTBPAR_EDGE"
+  :ctype_parstring '"MELTBPARSTR_EDGE"
+  :ctype_argfield '"meltbp_edge"
+  :ctype_resfield '"meltbp_edgeptr"
+  :ctype_marker '"gt_ggc_mx_edge_def"
+  :ctype_autoboxdiscr discr_edge
+  :ctype_autoconstboxdiscr discr_constant_edge
+;; GTY ctype
+  :ctypg_boxedmagic '"MELTOBMAG_EDGE"
+  :ctypg_mapmagic '"MELTOBMAG_MAPEDGES"
+  :ctypg_boxedstruct '"meltedge_st"
+  :ctypg_boxedunimemb '"u_edge"
+  :ctypg_entrystruct '"entryedgemelt_st"
+  :ctypg_mapstruct '"meltmapedges_st"
+  ;; :ctypg_boxdiscr  discr_edge
+  :ctypg_mapdiscr  discr_map_edges
+  :ctypg_mapunimemb    	 '"u_mapedges"
+  :ctypg_boxfun        	 '"meltgc_new_edge"
+  :ctypg_unboxfun      	 '"melt_edge_content"
+  :ctypg_updateboxfun  	 '"meltgc_edge_updatebox"
+  :ctypg_newmapfun     	 '"meltgc_new_mapedges"
+  :ctypg_mapgetfun     	 '"melt_get_mapedges"
+  :ctypg_mapputfun     	 '"melt_put_mapedges"
+  :ctypg_mapremovefun  	 '"melt_remove_mapedges"
+  :ctypg_mapcountfun   	 '"melt_count_mapedges"
+  :ctypg_mapsizefun    	 '"melt_size_mapedges"
+  :ctypg_mapnattfun    	 '"melt_nthattr_mapedges"
+  :ctypg_mapnvalfun    	 '"melt_nthval_mapedges"
+  :ctypg_mapauxdatafun     '"melt_auxdata_mapedges"
+  :ctypg_mapauxputfun     '"melt_auxput_mapedges"	
+  )
+(install_ctype_descr ctype_edge "GCC edge")
+
+;; the C type for gcc loop-s
+(definstance ctype_loop class_ctype_gty
+  :doc #{The $CTYPE_LOOP is the c-type of raw GCC loop stuff. See also $DISCR_LOOP.
+Keyword is :loop.}#
+  :predef CTYPE_LOOP
+  :named_name  '"CTYPE_LOOP"
+  :ctype_keyword ':loop
+  :ctype_cname '"loop_p"
+  :ctype_parchar '"MELTBPAR_LOOP"
+  :ctype_parstring '"MELTBPARSTR_LOOP"
+  :ctype_argfield '"meltbp_loop"
+  :ctype_resfield '"meltbp_loopptr"
+  :ctype_marker '"gt_ggc_mx_loop"
+  :ctype_autoboxdiscr discr_loop
+  :ctype_autoconstboxdiscr discr_constant_loop
+;; GTY ctype
+  :ctypg_boxedmagic '"MELTOBMAG_LOOP"
+  :ctypg_mapmagic '"MELTOBMAG_MAPLOOPS"
+  :ctypg_boxedstruct '"meltloop_st"
+  :ctypg_boxedunimemb '"u_loop"
+  :ctypg_entrystruct       '"entryloopmelt_st"
+  :ctypg_mapstruct         '"meltmaploops_st"
+  ;; :ctypg_boxdiscr          discr_loop
+  :ctypg_mapdiscr          discr_map_loops
+  :ctypg_mapunimemb    	   '"u_maploops"
+  :ctypg_boxfun        	   '"meltgc_new_loop"
+  :ctypg_unboxfun      	   '"melt_loop_content"
+  :ctypg_updateboxfun  	   '"melt_loop_updatebox"
+  :ctypg_newmapfun     	   '"meltgc_new_maploops"
+  :ctypg_mapgetfun     	   '"melt_get_maploops"
+  :ctypg_mapputfun     	   '"melt_put_maploops"
+  :ctypg_mapremovefun  	   '"melt_remove_maploops"
+  :ctypg_mapcountfun   	   '"melt_count_maploops"
+  :ctypg_mapsizefun    	   '"melt_size_maploops"
+  :ctypg_mapnattfun    	   '"melt_nthattr_maploops"
+  :ctypg_mapnvalfun    	   '"melt_nthval_maploops"		
+  :ctypg_mapauxdatafun     '"melt_auxdata_maploops"
+  :ctypg_mapauxputfun      '"melt_auxput_maploops"
+  )
+(install_ctype_descr ctype_loop "GCC loop")
+
+;; the C type for gcc rtx-s
+(definstance ctype_rtx class_ctype_gty
+  :doc #{The $CTYPE_RTX is the c-type of raw GCC rtx stuff. See also $DISCR_RTX.
+Keyword is :rtx.}#
+  :predef CTYPE_RTX
+  :named_name  '"CTYPE_RTX"
+  :ctype_keyword ':rtx
+  :ctype_cname '"rtx"
+  :ctype_parchar '"MELTBPAR_RTX"
+  :ctype_parstring '"MELTBPARSTR_RTX"
+  :ctype_argfield '"meltbp_rtx"
+  :ctype_resfield '"meltbp_rtxptr"
+  :ctype_marker '"gt_ggc_mx_rtx"
+  :ctype_autoboxdiscr discr_rtx
+;; GTY ctype
+  :ctypg_boxedmagic '"MELTOBMAG_RTX"
+  :ctypg_mapmagic '"MELTOBMAG_MAPRTXS"
+  :ctypg_boxedstruct '"meltrtx_st"
+  :ctypg_boxedunimemb '"u_rtx"
+  :ctypg_entrystruct '"entryrtxmelt_st"
+  :ctypg_mapstruct '"meltmaprtxs_st"
+  ;; :ctypg_boxdiscr  discr_rtx
+  :ctypg_mapdiscr  discr_map_rtxs
+  :ctypg_mapunimemb    '"u_maprtxs"
+  :ctypg_boxfun        '"meltgc_new_rtx"
+  :ctypg_unboxfun      '"melt_rtx_content"
+  :ctypg_updateboxfun  '"meltgc_rtx_updatebox"
+  :ctypg_newmapfun     '"meltgc_new_maprtxs"
+  :ctypg_mapgetfun     '"melt_get_maprtxs"
+  :ctypg_mapputfun     '"melt_put_maprtxs"
+  :ctypg_mapremovefun  '"melt_remove_maprtxs"
+  :ctypg_mapcountfun   '"melt_count_maprtxs"
+  :ctypg_mapsizefun    '"melt_size_maprtxs"
+  :ctypg_mapnattfun    '"melt_nthattr_maprtxs"
+  :ctypg_mapnvalfun    '"melt_nthval_maprtxs"	
+  :ctypg_mapauxdatafun     '"melt_auxdata_maprtxs"
+  :ctypg_mapauxputfun     '"melt_auxput_maprtxs"
+  )
+(install_ctype_descr ctype_rtx "GCC rtx")
+
+;; the C type for gcc bitmap-s
+(definstance ctype_bitmap class_ctype_gty
+  :doc #{The $CTYPE_BITMAP is the c-type of raw GCC bitmap stuff. See also $DISCR_BITMAP.
+Keyword is :bitmap.}#
+  :predef CTYPE_BITMAP
+  :named_name  '"CTYPE_BITMAP"
+  :ctype_keyword ':bitmap
+  :ctype_cname '"bitmap"
+  :ctype_parchar '"MELTBPAR_BITMAP"
+  :ctype_parstring '"MELTBPARSTR_BITMAP"
+  :ctype_argfield '"meltbp_bitmap"
+  :ctype_resfield '"meltbp_bitmapptr"
+  :ctype_marker '"gt_ggc_mx_bitmap"
+  :ctype_autoboxdiscr discr_bitmap
+;; GTY ctype
+  :ctypg_boxedmagic '"MELTOBMAG_BITMAP"
+  :ctypg_mapmagic '"MELTOBMAG_MAPBITMAPS"
+  :ctypg_boxedstruct '"meltbitmap_st"
+  :ctypg_boxedunimemb '"u_bitmap"
+  :ctypg_entrystruct '"entrybitmapmelt_st"
+  :ctypg_mapstruct '"meltmapbitmaps_st"
+  ;; :ctypg_boxdiscr  discr_bitmap
+  :ctypg_mapdiscr  discr_map_bitmaps
+  :ctypg_mapunimemb    	   '"u_mapbitmaps"
+  :ctypg_boxfun        	   '"meltgc_new_bitmap"
+  :ctypg_unboxfun      	   '"melt_bitmap_content"
+  :ctypg_updateboxfun  	   '"meltgc_bitmap_updatebox"
+  :ctypg_newmapfun     	   '"meltgc_new_mapbitmaps"
+  :ctypg_mapgetfun     	   '"melt_get_mapbitmaps"
+  :ctypg_mapputfun     	   '"melt_put_mapbitmaps"
+  :ctypg_mapremovefun  	   '"melt_remove_mapbitmaps"
+  :ctypg_mapcountfun   	   '"melt_count_mapbitmaps"
+  :ctypg_mapsizefun    	   '"melt_size_mapbitmaps"
+  :ctypg_mapnattfun    	   '"melt_nthattr_mapbitmaps"
+  :ctypg_mapnvalfun    	   '"melt_nthval_mapbitmaps"
+  :ctypg_mapauxdatafun     '"melt_auxdata_mapbitmaps"
+  :ctypg_mapauxputfun      '"melt_auxput_mapbitmaps"	
+  )
+(install_ctype_descr ctype_bitmap "GCC bitmap")
+
+;; the C type for gcc rtvec-s
+(definstance ctype_rtvec class_ctype_gty
+  :doc #{The $CTYPE_RTVEC is the c-type of raw GCC rtvec stuff. See also $DISCR_RTVEC.
+Keyword is :rtvec.}#
+  :predef CTYPE_RTVEC
+  :named_name  '"CTYPE_RTVEC"
+  :ctype_keyword ':rtvec
+  :ctype_cname '"rtvec"
+  :ctype_parchar '"MELTBPAR_RTVEC"
+  :ctype_parstring '"MELTBPARSTR_RTVEC"
+  :ctype_argfield '"meltbp_rtvec"
+  :ctype_resfield '"meltbp_rtvecptr"
+  :ctype_marker '"gt_ggc_mx_rtvec"
+  :ctype_autoboxdiscr discr_rtvec
+;; GTY ctype
+  :ctypg_boxedmagic '"MELTOBMAG_RTVEC"
+  :ctypg_mapmagic '"MELTOBMAG_MAPRTVECS"
+  :ctypg_boxedstruct '"meltrtvec_st"
+  :ctypg_boxedunimemb '"u_rtvec"
+  :ctypg_entrystruct '"entryrtvecmelt_st"
+  :ctypg_mapstruct '"meltmaprtvecs_st"
+  ;; :ctypg_boxdiscr  discr_rtvec
+  :ctypg_mapdiscr  discr_map_rtvecs
+  :ctypg_mapunimemb    	   '"u_maprtvecs"
+  :ctypg_boxfun        	   '"meltgc_new_rtvec"
+  :ctypg_unboxfun      	   '"melt_rtvec_content"
+  :ctypg_updateboxfun  	   '"meltgc_rtvec_updatebox"
+  :ctypg_newmapfun     	   '"meltgc_new_maprtvecs"
+  :ctypg_mapgetfun     	   '"melt_get_maprtvecs"
+  :ctypg_mapputfun     	   '"melt_put_maprtvecs"
+  :ctypg_mapremovefun  	   '"melt_remove_maprtvecs"
+  :ctypg_mapcountfun   	   '"melt_count_maprtvecs"
+  :ctypg_mapsizefun    	   '"melt_size_maprtvecs"
+  :ctypg_mapnattfun    	   '"melt_nthattr_maprtvecs"
+  :ctypg_mapnvalfun    	   '"melt_nthval_maprtvecs"
+  :ctypg_mapauxdatafun     '"melt_auxdata_maprtvecs"
+  :ctypg_mapauxputfun      '"melt_auxput_maprtvecs"
+  )
+(install_ctype_descr ctype_rtvec "GCC rtvec")
+
+;;;;;;;;;;;;;;;;
+;; the C type for void
+(definstance ctype_void class_ctype
+  :predef CTYPE_VOID
+  :doc #{The $CTYPE_VOID is the c-type of void stuff, used for expressions, e.g. primitive invocations, 
+with only a side effect and no results. Keyword is :void but cannot be used to type an argument or a result.}#
+  :named_name  '"CTYPE_VOID"
+  :ctype_keyword ':void
+  :ctype_cname  '"void"
+  ;; void is never passed as argument or as extra result
+  )
+(install_ctype_descr ctype_void "void type for side-effecting primitives without results")
+
+;; the C type for constant C strings
+(definstance ctype_cstring class_ctype_plain
+  :doc #{The $CTYPE_CSTRING is the c-type of raw C string [const char*] stuff. See also DISCR_STRING.
+Keyword is :cstring.}#
+  :predef CTYPE_CSTRING
+  :named_name  '"CTYPE_CSTRING"
+  :ctype_keyword ':cstring
+  :ctype_cname  (stringconst2val discr_name_string "const char*")
+  :ctype_parchar '"MELTBPAR_CSTRING"
+  :ctype_parstring '"MELTBPARSTR_CSTRING"
+  :ctype_argfield '"meltbp_cstring"
+  :ctype_autoconstboxdiscr discr_string
+  :ctypp_boxing '"/*ctype_cstring boxing*/ meltgc_new_stringdup"
+  :ctypp_unboxing '"/*ctype_cstring unboxing*/ melt_string_str"
+  )
+(install_ctype_descr ctype_cstring "C constant strings (statically allocated outside of any heap)")
+
+
+
+
+
+
+;;; container of a mapstring for cloning symbol, maping symbol names to boxed integer
+(definstance container_clonemapstring class_reference
+  :referenced_value (make_mapstring discr_map_strings 200)
+  )
+
+(defun clone_symbol (symb)
+  :doc #{Function to clone a given symbol or string $SYMB, producing a new instance of class_cloned_symbol}#
+  (let ( (mapstr (unsafe_get_field :referenced_value container_clonemapstring)) 
+	 (synam
+	  (cond
+	   ( (is_string symb) 
+	     symb)
+	   ( (is_a symb class_named) 
+	     (unsafe_get_field :named_name symb))
+	   (:else 
+	    (let ( (discrinam (get_field :named_name (discrim symb)))
+		   )
+	      (warningmsg_strv "clone_symbol got invalid argument of discriminant" 
+			       discrinam)
+	      (shortbacktrace_dbg "clone_symbol error.." 15)
+	      (let ( (:cstring namcstr (the_null_cstring)
+			       ) )
+		(code_chunk clonamstr
+		      #{ /* clone_symbol $CLONAMSTR */ {
+		      static char clonambuf_$CLONAMSTR[100];
+		      const char *s = melt_string_str ((melt_ptr_t) $DISCRINAM);
+		      if (s) s = strchr(s, '_');
+		      if (!s) s = "_What";
+		      memset (clonambuf_$CLONAMSTR, 0, sizeof(clonambuf_$CLONAMSTR));
+		      snprintf (clonambuf_$CLONAMSTR, 
+				sizeof(clonambuf_$CLONAMSTR),
+				"Cloned_Melt%s", s);
+		      $NAMCSTR = clonambuf_$CLONAMSTR;	    
+		      } /* end clone_symbol $CLONAMSTR */
+		      }# )
+		(make_stringconst discr_string namcstr)
+		)))
+	   ))
+	 (boxi (mapstring_getstr mapstr synam)) )
+    (assert_msg "check synam" (is_string synam) synam)
+    (if (not (is_integerbox boxi))
+	(progn 
+	  (setq boxi (make_integerbox discr_integer 0))
+	  (mapstring_putstr mapstr synam boxi)))
+    (let ( (:long i (get_int boxi)) )
+      (setq i (+i i 1))
+      (put_int boxi i)
+      (instance class_cloned_symbol
+		:named_name synam
+		:csym_urank (make_integerbox discr_constant_integer i)))))
+
+
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+
+
+;;  class for delayed queues.
+(defclass class_delayed_queue
+  :doc #{A class for named queues of delayed tasks. $DELQU_FIRST is
+  the list of actions to do first, $DELQU_LAST those to do last.}#
+  :super class_named
+  :fields (delqu_first
+	   delqu_last
+	   delqu_data
+	   ))
+
+
+
+
+
+(definstance option_map_container class_reference 
+  :referenced_value (make_mapobject discr_map_objects 41))
+
+(defclass class_option_descriptor
+  :doc #{The internal $CLASS_OPTION_DESCRIPTOR describes MELT
+options. $OPTDESC_NAME is the option symbol name, $OPTDESC_FUN is the
+function, and $OPTDESC_HELP is the help string.}#
+  :super class_root
+  :fields (optdesc_name 
+	   optdesc_fun
+	   optdesc_help)
+)
+
+(defun init_optionsetter (optsymb :cstring optval)
+  (let ( (optmap (unsafe_get_field :referenced_value option_map_container)) 
+	 (optdec (mapobject_get optmap optsymb))
+	 (optname (get_field :named_name optsymb))
+	 )
+    (assert_msg "check optsymb" (is_a optsymb class_symbol) optsymb)
+    (if optdec
+	(let ( (optfun (get_field :optdesc_fun optdec)) 
+	       )
+	  (assert_msg "check optdec" (is_a optdec class_option_descriptor) optdec)
+	  (let ( (optres (optfun optsymb optval)) 
+		 )
+	    (return optres)))
+      (progn
+	(code_chunk badoption 
+		    #{ warning (0, "unrecognized MELT option %s. Use -f[plugin-arg-]melt-option=help", 
+				   melt_string_str ((melt_ptr_t) $OPTNAME)) }#)
+	(return)
+	))))
+	       
+(defun register_option (optsymb opthelp optfun)
+  :doc #{Registers a MELT option of symbol $OPTSYMB helpstring $OPTHELP and 
+function $OPTFUN.}#
+   (if (and (is_a optsymb class_symbol)
+	    (is_string opthelp)
+	    (is_closure optfun))
+       (let ( (optmap (unsafe_get_field :referenced_value option_map_container)) 
+	      (optdesc (instance class_option_descriptor
+				 :optdesc_name optsymb
+				 :optdesc_fun optfun
+				 :optdesc_help opthelp))
+	      )
+	 (mapobject_put optmap optsymb optdesc)
+	 )))
+
+(defun option_helper_fun (helpsymb :cstring helpstr)
+  (let ( (optmap (unsafe_get_field :referenced_value option_map_container))
+	 (symb (if helpstr (get_raw_symbol helpstr)))
+	 (optd (mapobject_get optmap symb))
+	 )
+    (cond
+     ( (is_a optd class_option_descriptor)
+       (let ( (opthelp (unsafe_get_field :optdesc_help optd)) 
+	      )
+	 (code_chunk givehelp
+		     #{ inform (UNKNOWN_LOCATION, 
+				"MELT help for option %s : %s",
+				$HELPSTR, melt_string_str ((melt_ptr_t) $OPTHELP)) }#)
+	 (return helpsymb)     
+       ))
+     (:else
+      (let ( (sortedsymbtup (mapobject_sorted_attribute_tuple optmap))
+	     (sortednametup (multiple_map sortedsymbtup
+					  (lambda (sy) (get_field :named_name sy)))
+			     )
+	     (:long nbsymb (multiple_length sortedsymbtup))
+	     )
+	(code_chunk 
+	 informoption
+	 #{ /* option_helper_fun $INFORMOPTION start */ { int i=0;
+	    inform (UNKNOWN_LOCATION, "There are %d MELT options", 
+				      (int) $NBSYMB);
+	    for (i=0;
+		 i<(int) $NBSYMB;
+		 i+=2) {
+		 const char *n1 = melt_string_str((melt_ptr_t) melt_multiple_nth((melt_ptr_t) $SORTEDNAMETUP, i));
+		 const char *n2 = melt_string_str((melt_ptr_t) melt_multiple_nth((melt_ptr_t) $SORTEDNAMETUP, i+1));
+		 if (n1 && n2) 
+		   inform (UNKNOWN_LOCATION, "possible MELT options: %s & %s", n1, n2);
+		 else
+		   inform (UNKNOWN_LOCATION, "possible MELT option: %s", n1);
+            };
+            inform (UNKNOWN_LOCATION, "Use -f[plugin-arg-]melt-option=help=X for help about MELT option X");
+	    } /* option_helper_fun $INFORMOPTION end */ 
+	  }#)
+	(return helpsymb)
+      )))
+))
+
+
+(register_option 'help
+		 '"Gives help about recognized MELT options"
+		 option_helper_fun)
+
+
+
+
+
+(defprimitive melt_error_counter () :long 
+  :doc #{The MELT error counter.}#
+#{(long) (melt_error_counter)}#)
+
+;;;;
+
+;;;;;;;;;;;;;;;;;;;; initial system data 
+(definstance initial_system_data class_system_data
+  :doc #{The $INITIAL_SYSTEM_DATA is the unique instance of
+$CLASS_SYSTEM_DATA. Only for gurus. It normally should not be
+accessed or updated but is internally useful to many MELT mechanisms.}#
+  :predef INITIAL_SYSTEM_DATA
+  :named_name '"INITIAL_SYSTEM_DATA"
+  :sysdata_mode_dict  (make_mapstring discr_map_strings 40) ;stringmap for modes
+  :sysdata_symboldict  (make_mapstring discr_map_strings 600) ;stringmap for symbols
+  :sysdata_keywdict  (make_mapstring discr_map_strings 100) ;stringmap for keywords
+  :sysdata_pass_dict (make_mapstring discr_map_strings 100) ;stringmap for gcc passes
+  :sysdata_debugmsg ()
+  :sysdata_stdout ()			;initialized later
+  :sysdata_stderr ()			;initialized later
+  :sysdata_dumpfile ()			;initialized later
+  :sysdata_option_set init_optionsetter
+  :sysdata_meltpragmas ()
+  :sysdata_src_loc_file_dict (make_mapstring discr_map_strings 200)
+  )
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;; general purpose utility functions
+
+
+
+;;; iterate fully in map of objects 
+(defun mapobject_every (map f)
+  :doc #{For a given hash-map of objects $MAP and a function $F,
+apply $F to every attribute object and value in the map. Returns
+nil.}#
+  (if (is_mapobject map)
+      (if (is_closure f)
+	  (foreach_in_mapobject 
+	   (map)
+	   (curat  curval)
+	   (f curat curval))
+	)))
+
+;;; iterate & test over a map of objects - if the called f returns nil
+;;; (with perhaps a secondary value result) the iteration is stopped
+;;; and returns the "failing" attr, value, & f's secundary result
+(defun mapobject_iterate_test (map f)
+  :doc #{With a given object hash-map $MAP and function $F which
+  returns a boolean [=nil or not] test value and perhaps a secundary other value,
+  iterate on the map and apply $F to every attribute and value in the
+  $MAP. If $F returns a nil primary result, stop the iteration, and
+  return the failed attribute, associated value, and an eventual other
+  secundary results value returned by $F.}#
+  (if (is_mapobject map)
+      (if (is_closure f)
+	  (foreach_in_mapobject 
+	   (map)
+	   (curat curval)
+	   (multicall 
+	    (test other)
+	    (f curat curval)
+	    (if (null test)
+		(return curat curval other)))))))
+
+
+;;;;;;;;;;;;;;;;
+
+;;; citerator on pairs
+(defciterator foreach_pair_between
+  (start_pair end_pair) ;start formals 
+  eachpairb ;state
+  (curpair curcomp) ;local formals
+  :doc #{The $FOREACH_PAIR_BETWEEN iterator goes between two (linked) pairs,
+  given by the start formal $START_PAIR and $END_PAIR. Local formals are $CURPAIR,
+  bound to the current pair, and $CURCOMP, bound to the current component within
+  the pair.}#
+   #{/* start foreach_pair_between $EACHPAIRB */
+   for ($CURPAIR = $START_PAIR;
+	melt_magic_discr((melt_ptr_t) $CURPAIR) == MELTOBMAG_PAIR;
+        $CURPAIR = melt_pair_tail((melt_ptr_t) $CURPAIR)) {
+	$CURCOMP = melt_pair_head((melt_ptr_t) $CURPAIR); }#
+   #{ /* ending  foreach_pair_between  $EACHPAIRB */
+      if ($CURPAIR == $END_PAIR) {
+         break;
+      }
+   } /* end foreach_pair_between $EACHPAIRB */
+      $CURCOMP = NULL;
+      $CURPAIR = NULL;
+   }#
+)
+
+
+;;; full iterator on a list
+(defun list_every (lis f)
+  :doc #{Given a list $LIS and a function $F, apply $F to every element of the list. Return nil.}#
+  (if (is_list lis)
+      (if (is_closure f)
+	  (foreach_pair_component_in_list
+	   (lis)
+	   (curpair curcomp)
+	   (f curcomp)
+	   ))))
+
+;;; iterator on a list, if the called f returns nil the iteration is stopped
+(defun list_iterate_test (lis f)
+  :doc #{Given a list $LIS and a function $F, apply $F to every
+  element and its pair in the list. If it returns nil with an other
+  secondary value, return the element and the other.}#
+  (if (is_list lis)
+      (if (is_closure f)
+	  (foreach_pair_component_in_list
+	   (lis)
+	   (curpair curcomp)
+	   (multicall
+	    (test other)
+	    (f curcomp curpair)
+	    (if (null test) (return curcomp other))
+	    )))))
+
+;; add to a destination list a source list
+(defun list_append2list (dlist slist)
+  :doc #{Add to the destination list $DLIST the source list $SLIST:
+add every element of the source list at end of the destination. Return
+the $DLIST.}#
+  (if (not (is_list slist)) (return dlist))
+  (if (not (is_list dlist)) (setq dlist (make_list discr_list)))
+  (foreach_pair_component_in_list
+   (slist)
+   (curpair curcomp)
+   (list_append dlist curcomp))
+  (return dlist))
+
+
+
+;;; map on a list (list_map lis f) where lis is (e1 ... en) is ((f e1) .... (f en))
+(defun list_map (lis f)
+  :doc #{$LIST_MAP $LIS $F maps $F to each element of list $LIS, so
+returns the list (LIST (F E_1) ...(F E_n)) if $LIS is the (LIST E_1
+... E_n).}#
+  (if (is_list lis)
+      (if (is_closure f)
+	  (let ( (reslis (make_list discr_list)) 
+		 (curpair (list_first lis)) )
+	    (forever lisloop
+		     (if (not (is_pair curpair)) (exit lisloop reslis))
+		     (let ( (curelem (pair_head curpair)) )
+		       (list_append reslis (f curelem)))
+		     (setq curpair (pair_tail curpair)))
+	    ))))
+
+
+;; find in a list LIS an element E verifying F E X or E == X if F is null
+(defun list_find (lis x f)
+  :doc #{$LIST_FIND find in list $LIS the first element E such
+  that ($F E $X), if $F is null use the identity test.}#
+  (if (is_list lis)
+      (let ( (curpair (list_first lis)) )
+	(if (is_closure f)
+	    (forever lisloop
+		     (if (not (is_pair curpair)) (exit lisloop))
+		     (let ( (curelem (pair_head curpair)) 
+			    (t (f curelem x)) )
+		       (if t (return t))
+		       (setq curpair (pair_tail curpair)))
+		     )
+	  (forever memloop
+		   (if (not (is_pair curpair)) (exit memloop))
+		   (let ( (curelem (pair_head curpair)) )
+		     (if (== curelem x) (return curelem))
+		     (setq curpair (pair_tail curpair)))
+		   )
+	  )
+	)))
+ 
+
+
+;;; translate a list to a multiple - with each element transformed by
+;;; a function f (default the identity)
+(defun list_to_multiple (lis disc f)
+  (if (null disc) (setq disc discr_multiple))
+  (if (is_list lis)
+      (let ( (:long ln (list_length lis))
+	     (:long count 0)
+	     (tup (make_multiple disc ln))
+	     )
+	(cond ( (is_closure f)
+		(foreach_pair_component_in_list
+		 (lis)
+		 (curpair curcomp)
+		 (multiple_put_nth tup count (f curcomp))
+		 (setq count (+i count 1)))
+		)
+	      (:else
+	       (foreach_pair_component_in_list
+		(lis)
+		(curpair curcomp)
+		(multiple_put_nth tup count curcomp)
+		(setq count (+i count 1)))
+	       ))
+	(return tup))))
+
+;;; translate a pairlist to a tuple - with each element transformed by a function f (default the identity)
+(defun pairlist_to_multiple (pair disc f)
+  :doc #{Make a multiple from a list of pairs: given a pair list
+starting with $PAIR and a multiple discriminant $DISC and an
+optional function $F [by default the identity], return a multiple of
+discriminant $DISC made of the result of applying $F to every head
+of pairs.}#
+  (if (null disc) (setq disc discr_multiple))
+  (let ( (:long ln 0) )
+    (let ( (curpair pair) )
+      (forever loopln
+	       (if (not (is_pair curpair)) (exit loopln))
+	       (setq ln (+i ln 1))
+	       (setq curpair (pair_tail curpair))))
+    (let ( (tup (make_multiple disc ln))
+	   (:long ix 0) 
+	   (curpair pair)
+	   )
+      (forever loopfi
+	       (if (not (is_pair curpair)) (exit loopfi))
+	       (let ( (c (pair_head curpair))
+		      (tc (if (is_closure f) (f c) c)) )
+		 (multiple_put_nth tup ix tc)
+		 (setq ix (+i ix 1))
+		 (setq curpair (pair_tail curpair))))
+      (return tup)
+      )))
+
+
+;;;;;;;;;;;;;;;;
+;; citerator on tuple
+(defciterator foreach_in_multiple 
+  (tup)					;start formal
+  eachtup				;state
+  (comp :long ix)			;local formals
+  :doc #{Iterate in the given tuple $TUP for each component $COMP at index $IX}#
+  #{ /* start foreach_in_multiple $EACHTUP */
+   long  $eachtup#_ln = melt_multiple_length((melt_ptr_t)$tup);
+   for ($ix = 0;  
+	($ix >= 0) && ($ix <  $eachtup#_ln);  
+	$ix++) {
+   $comp = melt_multiple_nth((melt_ptr_t)($tup),  $ix);
+   }#
+   #{ if ($ix<0) break;
+   } /* end  foreach_in_multiple $EACHTUP */ }#
+)
+
+(defciterator foreach_in_multiple_backward
+  (tup)					;start formal
+  eachtupback				;state
+  (comp :long ix)			;local formals
+  :doc #{Iterate backwards from last to first in the given tuple $TUP
+  for each component $COMP at index $IX}#
+  #{ /* start foreach_in_multiple_backward $EACHTUPBACK */
+   long  $eachtupback#_ln = melt_multiple_length((melt_ptr_t)$tup);
+   long  $eachtupback#_ix = 0;
+   for ($eachtupback#_ix = $eachtupback#_ln - 1;  
+	$eachtupback#_ix >= 0;  
+	$eachtupback#_ix--) {
+   $comp = melt_multiple_nth((melt_ptr_t)($tup),  $eachtupback#_ix);
+   $ix  =  $eachtupback#_ix;}#
+   #{ } /* end  foreach_in_multiple_backward $EACHTUPBACK */ }#
+  )
+
+;;; iterator on tuple , if the called f returns nil the iteration is stopped
+;;; the function is called with the component and its index
+(defun multiple_iterate_test (tup f)
+  :doc #{Given a multiple $TUP and a function $F, find the first
+component on which $F returns nil and some other value. Return the
+component, its index, and that other value.}#
+  (if (is_multiple tup)
+      (if (is_closure f)
+	  (foreach_in_multiple
+	   (tup)
+	   (comp :long ix)
+	   (multicall 
+	    (test other)
+	    (f comp ix)
+	    (if (null test) (return comp ix other)))))))
+
+
+
+;;; map on tuple -- with tup= (t0 t1 ... t_n-1) return ((f t0 0) (f t1 1) ... (f t_n-1 n-1)
+(defun multiple_map (tup f)
+  :doc #{Given a multiple $TUP and a function $F, make a multiple made
+of the application of $F to every component and its index.}#
+  (if (is_multiple tup)
+      (if (is_closure f)
+	  (let ( (:long ln (multiple_length tup))
+		 (:long ix 0) 
+		 (res (make_multiple discr_multiple ln))
+		 )
+	    (forever tuploop
+		     (if (>=i ix ln) (exit tuploop res))
+		     (let ( (curcomp (multiple_nth tup ix)) )
+		       (multiple_put_nth res ix (f curcomp ix)))
+		     (setq ix (+i ix 1)))
+	    ))))
+
+
+(defun multiple_to_list (tup disc transf)
+  :doc #{Given a multiple $TUP, a list discriminant $DISC [by default
+$DISCR_LIST], a function $TRANSF [by default the identity], make a
+list of every element of the tuple transformed by $TRANSF.}#
+  (if (null disc) (setq disc discr_list))
+  (if (is_multiple tup)
+      (let ( (lis (make_list disc)) )
+	(foreach_in_multiple 
+	 (tup)
+	 (comp :long ix)
+	 (if (is_closure transf)
+	     (list_append lis (transf comp))
+	   (list_append lis comp)))
+	(return lis)
+	)))
+  
+;;; full iterator on closures  
+;;; the function is called with the component and its index
+(defun closure_every (clo f)
+  :doc #{Apply to every value inside closure $CLO the function $F}#
+  (if (is_closure clo)
+      (if (is_closure f)
+	  (let ( (:long ln (closure_size clo))
+		 (:long ix 0) )
+	    (forever cloloop
+		     (if (>=i ix ln) (exit cloloop))
+		     (f  (closure_nth clo ix) ix)
+		     (setq ix (+i ix 1)))))))	     
+
+;;; full iterator on routine  
+;;; the function is called with the component and its index
+(defun routine_every (rou f)
+  :doc #{Apply to every value inside routine $ROU the function $F}#
+  (if (is_routine rou)
+      (if (is_closure f)
+	  (let ( (:long ln (routine_size rou))
+		 (:long ix 0) )
+	    (forever rouloop
+		     (if (>=i ix ln) (exit rouloop))
+		     (f  (routine_nth rou ix) ix)
+		     (setq ix (+i ix 1)))))))	     
+
+
+;;; full iterator on hook  
+;;; the function is called with the component and its index
+(defun hook_every (hk f)
+  :doc #{Apply to every value inside hook $HK the function $F}#
+  (if (is_hook hk)
+      (if (is_closure f)
+	  (let ( (:long ln (hook_size hk))
+		 (:long ix 0) )
+	    (forever hookloop
+		     (if (>=i ix ln) (exit hookloop))
+		     (f  (hook_nth hk ix) ix)
+		     (setq ix (+i ix 1)))))))	     
+
+
+
+;;; installation of a method in a class or discriminant
+(defun install_method (dis sel fun)
+  :doc #{Install in class or discriminant $DIS for selector $SEL the function $FUN as method body.}#
+  (cond 
+   ( (is_a dis class_discriminant)
+     (let ( (disname (unsafe_get_field :named_name dis))
+	    )
+       (cond 
+	( (is_a sel class_selector)
+	  (let ( (selname (unsafe_get_field :named_name sel))
+		 )
+	    (cond
+	     ( (is_closure fun)
+	       (let 
+		   ( (mapdict 
+		      (unsafe_get_field :disc_methodict dis)) )
+		 (if (is_mapobject mapdict)
+		     (mapobject_put mapdict sel fun)
+		   (let ( (newmapdict (make_mapobject discr_method_map 35)) )
+		     (unsafe_put_fields dis :disc_methodict newmapdict)
+		     (mapobject_put newmapdict sel fun)
+		     ))))
+	     (:else			; fun not a closure
+	      (shortbacktrace_dbg "INSTALL_METHOD failing on non-function" 20)
+	      (code_chunk 
+	       error_non_fun
+	       #{ /* $ERROR_NON_FUN */
+	       error ("MELT INSTALL_METHOD ERROR [#%ld] non-function in discriminant %s for selector %s",
+		      melt_dbgcounter,
+		      melt_string_str((melt_ptr_t) $DISNAME),
+		      melt_string_str((melt_ptr_t) $SELNAME)) ;
+	       }#)
+	      ))))
+	( (is_a sel class_named)  ; sel is not a selector but is named
+	  (let ( (badselnam (unsafe_get_field :named_name sel))
+		 )
+	    (shortbacktrace_dbg "INSTALL_METHOD failing with bad named selector" 20)
+	    (code_chunk
+	     error_bad_named_sel
+	     #{ /* $ERROR_BAD_NAMED_SEL */
+	     error ("MELT INSTALL_METHOD ERROR [#%ld] bad named selector %s in discriminant %s",
+		    melt_dbgcounter,
+		    melt_string_str((melt_ptr_t) $BADSELNAM),
+		    melt_string_str((melt_ptr_t) $DISNAME)) ;
+	     }#)
+	    ))
+	(:else				;selector is not even named
+	 (shortbacktrace_dbg "INSTALL_METHOD failing with bad selector" 20)
+	 (code_chunk
+	  error_bad_sel
+	  #{ /* $ERROR_BAD_SEL */
+	  error ("MELT INSTALL_METHOD ERROR [#%ld] bad selector in discriminant %s",
+		 melt_dbgcounter,
+		 melt_string_str((melt_ptr_t) $DISNAME)) ;
+	  }#)
+	 )
+	)				; end of cond about sel
+       )
+     )				  ;end when dis is a discriminant
+   ( (is_a dis class_named)	  ;dis is named but not a discriminant
+     (let ( (baddisnam (unsafe_get_field :named_name dis))
+	    )
+       (shortbacktrace_dbg "INSTALL_METHOD failing with bad named discriminant" 20)
+       (code_chunk
+	error_bad_named_dis
+	#{ /* $ERROR_BAD_NAMED_DIS */
+	error ("MELT INSTALL_METHOD ERROR [#%ld] bad named discriminant %s",
+	       melt_dbgcounter, 
+	       melt_string_str((melt_ptr_t) $BADDISNAM)) ;
+	}#)
+       ))				;end when dis is named
+   (:else				;dis is not even named
+    (shortbacktrace_dbg "INSTALL_METHOD failing with bad discriminant" 20)
+    (code_chunk
+     error_bad_dis
+     #{ /* $ERROR_BAD_DIS */
+     error ("MELT INSTALL_METHOD ERROR [#%ld] bad discriminant",
+	    melt_dbgcounter)		;
+     }#))		 
+   )
+  )
+
+
+
+;; an internal compare function used to display mapobject-s & mapstring-s in a canonical order.
+(defun compare_obj_ranked (x1 bxrk1 x2 bxrk2 vless veq vgreat)
+  (if (== x1 x2)
+      (return veq)
+    (let ( (x1dis (discrim x1))
+	   (x2dis (discrim x2))
+	   (:long rk1 (get_int bxrk1))
+	   (:long rk2 (get_int bxrk2))
+	   )
+      (cond ( (!= x1dis x2dis)
+	      (if (string< (unsafe_get_field :named_name x1dis) 
+			   (unsafe_get_field :named_name x2dis))
+		  (return vless)
+		(return vgreat)
+		))
+	    ( (is_a x1 class_cloned_symbol)
+	      (let ( (n1 (unsafe_get_field :named_name x1))
+		     (n2 (unsafe_get_field :named_name x2)) )
+		(cond ( (string< n1 n2)
+			(return vless))
+		      ( (string> n1 n2)
+			(return vgreat))
+		      (:else 
+		       (let (
+			     (yr1 (unsafe_get_field :csym_urank x1))
+			     (yr2 (unsafe_get_field :csym_urank x2))
+			     (:long nr1 (get_int yr1))
+			     (:long nr2 (get_int yr2))
+			     )
+			 (cond ( (<i nr1 nr2)
+				 (return vless))
+			       ( (>i nr1 nr2)
+				 (return vgreat))
+			       (:else 
+				;; this should not happen, two distinct cloned symbols with same name & rank
+				(assert_msg "corrupted same cloned symbols" () x1 x2)
+				(return ()))
+			       ))))
+		))
+	    ( (is_a x1 class_named)
+	      (let ( (n1 (unsafe_get_field :named_name x1))
+		     (n2 (unsafe_get_field :named_name x2))
+		     )
+		(cond ( (string< n1 n2)
+			(return vless))
+		      ( (string> n1 n2)
+			(return vgreat))
+		      ( (<i rk1 rk2)
+			(return vless))
+		      ( (>i rk1 rk2)
+			(return vgreat))
+		      (:else 
+		       (return veq)))
+		)
+	      )
+	    ( (is_a x1 class_any_binding)
+	      (let ( (bsy1 (unsafe_get_field :binder x1))
+		     (bsy2 (unsafe_get_field :binder x1)) )
+		(return (compare_obj_ranked bsy1 bxrk1 bsy2 bxrk2 vless veq vgreat))))
+	    ( (is_string x1)
+	      (cond ( (string< x1 x2)
+		      (return vless))
+		    ( (string> x1 x2)
+		      (return vgreat))
+		    ( (<i rk1 rk2)
+		      (return vless))
+		    ( (>i rk1 rk2)
+		      (return vgreat))
+		    (:else 
+		     (return veq))))
+	    ( (<i rk1 rk2)
+	      (return vless))
+	    ( (>i rk1 rk2)
+	      (return vgreat))
+	    (:else
+	     (return veq))
+	    ))))
+
+
+
+
+
+;; utility to give a "sorted" tuple of attributes in a mapobject
+(defun mapobject_sorted_attribute_tuple (mapo)
+  :doc #{Give the alphabetically sorted tuple of attributes in a 
+given object map $MAPO}#
+  (let ( 
+	(:long mapcount (mapobject_count mapo)) 
+	(countbox (make_integerbox discr_integer 0))
+	(boxedone (make_integerbox discr_integer 1))
+	(boxedzero (make_integerbox discr_integer 0))
+	(boxedminusone (make_integerbox discr_integer -1))
+	(tupl (make_multiple discr_multiple mapcount))
+	)
+    ;; fill the tupl with (attribute value rank) entries
+    (mapobject_every
+     mapo
+     (lambda (at va)
+       (let ( (:long curcount (get_int countbox)) 
+	      (ent (tuple at va 
+			  (make_integerbox discr_integer curcount)))
+	      )
+	 (multiple_put_nth tupl curcount ent)
+	 (put_int countbox (+i curcount 1))
+	 )))
+;;; sort the tuple and output in sorted order
+    (let ( (sortupl 
+	    (multiple_sort 
+	     tupl
+	     (lambda (e1 e2)
+	       (let ( (e1at (multiple_nth e1 0))
+		      (e1va (multiple_nth e1 1))
+		      (e1rk (multiple_nth e1 2))
+		      (e2at (multiple_nth e2 0))
+		      (e2va (multiple_nth e2 1))
+		      (e2rk (multiple_nth e2 2))
+		      )
+		 (return 
+		  (compare_obj_ranked e1at e1rk e2at e2rk boxedminusone boxedzero boxedone) ())
+		 ))
+	     discr_multiple
+	     ))
+	   )
+      (multiple_map sortupl (lambda (el) (multiple_nth el 0)))
+      )
+    )
+  )
+
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;; make a fresh environment 
+(defun fresh_env (parenv descr)		;usually descr is not given
+  :doc #{Make a fresh environment of parent $PARENV and optional
+description $DESCR. See also $CLASS_ENVIRONMENT and
+$CLASS_DESCRIBED_ENVIRONMENT.}#
+  (if (or (null parenv) (is_a parenv class_environment))
+      (if descr
+	  (instance class_described_environment
+		    :env_bind (make_mapobject discr_map_objects 26)
+		    :env_prev parenv
+		    :denv_descr descr)
+	(instance class_environment 
+		  :env_bind (make_mapobject discr_map_objects 6)
+		  :env_prev parenv))))
+
+;; the initial environment
+(definstance initial_environment class_described_environment
+  :doc #{The initial environment of $CLASS_DESCRIBED_ENVIRONMENT.}#
+  :env_bind  (make_mapobject discr_map_objects 500)
+  :denv_descr '"Initial Environment"
+  )
+
+;; find a binding inside an environment
+(defun find_env (env binder)
+  :doc #{Find a binding inside environement $ENV for binder symbol $BINDER.}#
+  (assert_msg "check arg env" (is_a env class_environment) env)
+  (assert_msg "check arg binder" (is_object binder) binder)
+  (forever
+   findloop
+   (if (null env)
+       (exit findloop ()))
+   (assert_msg "check env obj" (is_object env) env)
+   (assert_msg "check good env" (is_a env class_environment) env)
+   (let ( (bindmap 
+	   (unsafe_get_field :env_bind env)) )
+     (assert_msg "check bindmap" (is_mapobject bindmap) bindmap)
+     (let ( (bnd 
+	     (mapobject_get bindmap binder)) )
+       (if bnd 
+	   (return bnd))
+       ))
+   (setq env (unsafe_get_field :env_prev env))
+   )
+  )
+
+;; find a binding inside an environment with debugging 
+(defun find_env_debug (env binder)
+  (assert_msg "check arg env" (is_a env class_environment) env)
+  (assert_msg "check arg binder" (is_object binder) binder)
+  (forever
+   findloop
+   (if (null env)
+       (exit findloop ()))
+   (assert_msg "check env obj" (is_object env) env)
+   (assert_msg "check good env" (is_a env class_environment) env)
+   (let ( (bindmap 
+	   (unsafe_get_field :env_bind env)) )
+     (assert_msg "check bindmap" (is_mapobject bindmap) bindmap)
+     (let ( (bnd 
+	     (mapobject_get bindmap binder)) )
+       (if bnd 
+	   (exit findloop bnd))
+       ))
+   (setq env (unsafe_get_field :env_prev env))
+   )
+  )
+
+;; find a binding inside an environment and also returns the reversed list of enclosing procedures and the environment having that binding
+(defun find_enclosing_env (env binder)
+  :doc #{Find the binding in environment $ENV for given $BINDER symbol 
+and secondarily return the reversed list of enclosing procedures.}#
+  (assert_msg "check env" (is_a env class_environment) env)
+  (assert_msg "check binder" (is_object binder) binder)
+  (let ( (proclist (make_list discr_list)) )
+    (forever findloop
+	     (if (is_not_a env class_environment) (exit findloop))
+	     (let ( (bindmap (unsafe_get_field :env_bind env)) 
+		    (eproc (unsafe_get_field :env_proc env))
+		    )
+	       (assert_msg "check bindmap" (is_mapobject bindmap) bindmap)
+	       (let ( (bnd (mapobject_get bindmap binder)) )
+		 (if bnd (return bnd proclist env)))
+	       (if eproc (list_prepend proclist eproc))
+	       (setq env (unsafe_get_field :env_prev env))
+	       ))))
+
+;; put a binding at top of an environment
+(defun put_env (env binding)
+  :doc #{Put into environment $ENV the given $BINDING. 
+See also $CLASS_ANY_BINDING and $CLASS_ENVIRONMENT.}#
+  (assert_msg "check binding is obj" (is_object binding) binding)
+  (assert_msg "check env is obj" (is_object env) env)
+  (assert_msg "check env" (is_a env class_environment) env)
+  (assert_msg "check binding" (is_a binding class_any_binding) binding class_any_binding (discrim binding))
+  (let ( (bindmap (unsafe_get_field :env_bind env)) 
+	 (binderv (unsafe_get_field :binder binding))
+	 )
+    (if (not (is_object binder))
+	(progn
+	  (shortbacktrace_dbg "put_env  bad binder in binding" 5)))
+    (assert_msg "check bindmap" (is_mapobject bindmap) bindmap)
+    (assert_msg "check binderv" (is_object binderv) binderv)
+    (mapobject_put bindmap binderv binding)
+    ))
+
+;; overwrite a binding in the environment where it has been already bound
+(defun overwrite_env (env binding)
+  :doc #{Overwrite in environment $ENV or its ancestor the given
+$BINDING, in the environment where it has already been bound.  See
+also $CLASS_ANY_BINDING and $CLASS_ENVIRONMENT.}#
+  (assert_msg "check env" (is_a env class_environment) env)
+  (assert_msg "check binding" (is_a binding class_any_binding) binding)
+  (let ( (binderv  (unsafe_get_field :binder binding)) )
+    (assert_msg "check binderv" (is_object binderv) binderv)
+    (forever findloop
+	     (if (not (is_a env class_environment)) (exit findloop))
+	     (let ( (bindmap (unsafe_get_field :env_bind env)) )
+	       (assert_msg "check bindmap" (is_mapobject bindmap) bindmap)
+	       (let ( (oldbinding (mapobject_get bindmap binder)) )
+		 (if oldbinding 
+		     (progn 
+		       (mapobject_put bindmap binderv binding)
+		       (exit findloop oldbinding))
+		   ))
+	       (setq env (unsafe_get_field :env_prev env))
+	       ))))
+
+;;;****************************************************************
+
+;;;====================================================================
+;;;******* fresh environment reference maker **************************
+;; tricky and perhaps dirty: emitted by compile2obj_initproc in
+;; warmelt-genobj.melt & used by 
+;; normexp_update_current_module_environment_reference in warmelt-normal.melt
+(defhook hook_fresh_environment_reference_maker (:value prevenv :cstring modulname)
+  ()
+  :value
+  :predef HOOK_FRESH_ENVIRONMENT_REFERENCE_MAKER
+  :doc #{The internal $HOOK_FRESH_ENVIRONMENT_REFERENCE_MAKER is 
+creating new environments in modules, it is called by the internal 
+$MELT_MAKE_FRESH_ENVIRONMENT_REFERENCE primitive. For gurus and MELT itself.}#
+  (if (melt_need_dbg 0) 
+      (shortbacktrace_dbg "hook_fresh_environment_reference_maker" 15))
+  (let (
+	(descr (if modulname (make_stringconst discr_string modulname)))
+	(newenv (fresh_env prevenv descr)) 
+	(newcont (instance class_reference 
+			   :referenced_value newenv))
+	)
+    (return newcont)
+    ))
+  
+
+;; before the update_current_module_environment_reference below, most
+;; constants for current_module_environment_reference or
+;; parent_module_environment are null because there is not enough
+;; stuff yet to build them.
+(update_current_module_environment_reference)
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; a special function to be called when compiling with compilinit mode.
+;;; which magically adds a call to it at end of the read list
+(defun post_initialization (unusedarg :cstring meltfilnam)
+  (let ( (curmodenvcont (current_module_environment_reference)) )
+    (if (not (is_a curmodenvcont class_reference))
+	(progn
+	  (warningmsg_strv "post_initialization strange curmodenvcont of discr"
+			   (unsafe_get_field :named_name (discrim curmodenvcont)))
+	  (return)
+	  ))
+    (assert_msg "check curmodenvcont" (is_a curmodenvcont class_reference) curmodenvcont)
+    (let ( (curmodenv (unsafe_get_field :referenced_value curmodenvcont)) )
+      (if (is_a curmodenv class_environment)
+	  (let ( (curbindmap (unsafe_get_field :env_bind curmodenv))
+		 )
+	    (informsg_long "post_initialization boundvars num" 
+			   (mapobject_count curbindmap))
+	    )
+	(let ( (curmenvdiscr (discrim curmodenv)) )
+	  (informsg_strv "post_initialization strange curmodenv of discr" 
+			 (unsafe_get_field :named_name curmenvdiscr)))
+	)))
+  )
+
+
+(put_fields
+ initial_system_data
+ :sysdata_stdout (let ( (f ())
+			(d discr_rawfile) 
+			)
+		   (code_chunk makestdout 
+			       #{ $f = meltgc_new_file((melt_ptr_t) $D, stdout)  /* $MAKESTDOUT */; }#
+			       )
+		   f)
+ :sysdata_stderr (let ( (f ())
+			(d discr_rawfile) 
+			)
+		   (code_chunk makestderr
+			       #{ $f = meltgc_new_file((melt_ptr_t) $D, stderr) /* $MAKESTDERR */ ; }#
+			       )
+		   f)
+ :sysdata_dumpfile (let ( (f ())
+			  (d discr_rawfile) 
+			  )
+		     ;; the FILE* of dumpfile is also set in pass executions.
+		     (code_chunk makedump
+				 #{ $F = meltgc_new_file((melt_ptr_t) $D, dump_file) /*$MAKEDUMP */ ; }#
+				 )
+		     f)
+ )
+
+(defun retrieve_dictionnary_ctype_gty ()
+  :doc #{Retrieve the dictionnary of GTY-ed ctypes.}#
+  (get_field :referenced_value container_ctype_gty_dict)
+)
+
+(defun retrieve_dictionnary_ctype ()
+  :doc #{Retrieve the dictionnary of all ctypes.}#
+  (get_field :referenced_value container_ctype_dict)
+)
+
+;;;;;; export the above classes
+(export_class ;;in alphabetical order, one per line, for convenience
+ class_alarm_handler
+ class_any_binding
+ class_any_matcher
+ class_any_module_context
+ class_c_generation_context
+ class_child_process_handler
+ class_citerator
+ class_citerator_binding
+ class_class
+ class_class_binding
+ class_cloned_symbol
+ class_cmatcher
+ class_cmatcher_binding
+ class_reference
+ class_ctype
+ class_ctype_gty
+ class_ctype_plain
+ class_defined_value_binding
+ class_delayed_queue
+ class_described_environment
+ class_discriminant 
+ class_environment
+ class_exported_binding
+ class_extension_generation_context
+ class_field
+ class_field_binding
+ class_fixed_binding
+ class_formal_binding
+ class_function_binding
+ class_funmatcher
+ class_funmatcher_binding
+ class_gcc_any_ipa_pass
+ class_gcc_gimple_pass
+ class_gcc_pass
+ class_gcc_pragma
+ class_gcc_rtl_pass
+ class_gcc_simple_ipa_pass
+ class_gcc_transform_ipa_pass
+ class_generated_c_code
+ class_hook_descriptor
+ class_hook_binding
+ class_initial_generation_context
+ class_input_channel_handler
+ class_instance_binding
+ class_keyword
+ class_label_binding
+ class_let_binding
+ class_letrec_binding
+ class_located
+ class_macro_binding
+ class_melt_mode
+ class_module_context
+ class_named
+ class_normal_let_binding
+ class_normalization_context
+ class_patmacro_binding
+ class_primitive
+ class_primitive_binding
+ class_proped 
+ class_quasi_ctype
+ class_root
+ class_running_extension_module_context
+ class_selector
+ class_selector_binding 
+ class_sexpr
+ class_sexpr_macrostring
+ class_source
+ class_symbol
+ class_system_data
+ class_value_binding 
+ class_variable_binding
+ )					;end of export class
+
+
+
+;;;;;;;;;;;;;;;;
+;;;; export the above primitives
+(export_values				;in alphanumerical order
+ !=
+ !=s
+ %i
+ %iraw
+ +i
+ /i
+ /iraw
+ <i
+ ==
+ ==s
+ >=i
+ >i
+ assert_failed
+ bucketlong_aux
+ bucketlong_count
+ bucketlong_get
+ bucketlong_nth_key
+ bucketlong_nth_val
+ bucketlong_put
+ bucketlong_remove
+ bucketlong_replace
+ bucketlong_setaux
+ bucketlong_setxnum
+ bucketlong_size 
+ bucketlong_xnum
+ closure_nth
+ closure_routine
+ closure_size
+ create_keywordstr
+ create_symbolstr
+ cstring_is_null
+ cstring_non_empty
+ discrim
+ get_int
+ get_keywordstr
+ get_raw_symbol
+ get_symbolstr
+ hook_data
+ hook_every
+ hook_name
+ hook_nth
+ hook_put_data
+ hook_size
+ informsg_long
+ informsg_strv
+ is_a
+ is_bucketlong
+ is_closure
+ is_hook
+ is_integerbox
+ is_list
+ is_list_or_null
+ is_mapobject
+ is_mapstring
+ is_multiple
+ is_non_empty_list
+ is_not_a
+ is_object
+ is_pair
+ is_routine
+ is_string
+ list_append
+ list_find
+ list_first
+ list_first_element
+ list_last
+ list_last_element
+ list_length
+ list_popfirst
+ list_prepend
+ make_bucketlong
+ make_integerbox
+ make_list
+ make_mapobject
+ make_mapstring
+ make_multiple
+ make_stringconst
+ mapobject_aux
+ mapobject_auxput
+ mapobject_count
+ mapobject_get
+ mapobject_nth_attr
+ mapobject_nth_val
+ mapobject_put
+ mapobject_remove
+ mapobject_size
+ mapstring_aux
+ mapstring_auxput
+ mapstring_getstr
+ mapstring_nth_attrstr
+ mapstring_nth_val
+ mapstring_putstr
+ mapstring_removestr
+ melt_assert_failure_fun
+ melt_low_debug
+ melt_need_dbg
+ melt_need_dbglim
+ melt_callcount
+ multiple_length
+ multiple_nth
+ multiple_put_nth
+ multiple_sort
+ not
+ null
+ pair_head
+ pair_tail
+ put_int
+ routine_descr
+ routine_nth
+ routine_size
+ shortbacktrace_dbg
+ string<
+ string>
+ string_to_long
+ stringconst2val
+ the_framedepth
+ the_null_cstring
+ )
+
+
+;; export the discriminants and instances and selectors defined above
+(export_values				;alphabetical order
+ ctype_basic_block
+ ctype_bitmap
+ ctype_cstring     
+ ctype_edge                   
+ ctype_gimple
+ ctype_gimple_seq
+ ctype_long 
+ ctype_loop
+ ctype_rtvec
+ ctype_rtx
+ ctype_tree                           
+ ctype_value                          
+ ctype_void  
+ discr_any_receiver                        
+ discr_basic_block                     
+ discr_bitmap 
+ discr_bucket_longs
+ discr_character_integer                    
+ discr_class_sequence                       
+ discr_closure                        
+ discr_constant_edge
+ discr_constant_basic_block   
+ discr_constant_gimple
+ discr_constant_gimple_seq
+ discr_constant_integer
+ discr_constant_loop
+ discr_constant_tree
+ discr_edge
+ discr_field_sequence                       
+ discr_file
+ discr_formal_sequence
+ discr_gimple
+ discr_gimple_seq
+ discr_hook
+ discr_integer                        
+ discr_list    
+ discr_loop
+ discr_macro_closure
+ discr_map_basic_blocks
+ discr_map_bitmaps
+ discr_map_edges
+ discr_map_gimple_seqs
+ discr_map_gimples
+ discr_map_objects                     
+ discr_map_rtvecs
+ discr_map_rtxs
+ discr_map_strings                     
+ discr_map_trees
+ discr_method_map 
+ discr_mixed_bigint
+ discr_mixed_integer                       
+ discr_mixed_location                       
+ discr_multiple                       
+ discr_name_string                     
+ discr_null_receiver                       
+ discr_pair  
+ discr_rawfile
+ discr_real
+ discr_routine                        
+ discr_rtvec
+ discr_rtx
+ discr_strbuf                         
+ discr_string                         
+ discr_tree                   
+ discr_variadic_formal_sequence
+ discr_verbatim_string  
+ initial_environment                  
+ initial_system_data
+ quasi_ctype_auto
+ quasi_ctype_macro
+ ) ;;;end export discriminants, instances, selectors
+
+
+;; export the functions & matchers defined above
+(export_values
+ as_null
+ clone_symbol
+ closure_every
+ compare_obj_ranked
+ find_enclosing_env			
+ find_env				
+ find_env_debug
+ fresh_env				
+ install_ctype_descr				
+ install_method	
+ is_empty_string
+ is_non_empty_string
+ list_append2list			
+ list_every				
+ list_iterate_test			
+ list_map				
+ list_to_multiple			
+ mapobject_every			
+ mapobject_iterate_test	
+ mapobject_sorted_attribute_tuple		
+ multiple_iterate_test			
+ multiple_map				
+ multiple_to_list
+ overwrite_env				
+ pairlist_to_multiple	
+ post_initialization
+ put_env
+ register_option
+ retrieve_dictionnary_ctype
+ retrieve_dictionnary_ctype_gty
+ routine_every
+ variadic_ctype
+ variadic_index
+ variadic_length
+ variadic_skip
+ variadic_type_code
+ )
+
+
+;; export the citerators & cmatchers defined above
+(export_values
+ foreach_pair
+ foreach_pair_between
+ foreach_in_bucketlong
+ foreach_in_bucketlong_backward
+ foreach_pair_component_in_list
+ foreach_in_mapobject
+ foreach_in_mapstring
+ foreach_in_multiple
+ foreach_in_multiple_backward
+ integerbox_of 
+ closure
+ )
+
+(export_synonym 
+ class_container class_reference
+ :doc #{A better name for container is mutable reference, so $CLASS_CONTAINER is also $CLASS_REFERENCE}#)
+
+(export_synonym container_value referenced_value
+ :doc #{A better name for contained value is referenced value, so field $CONTAINER_VALUE is also $REFERENCED_VALUE.}#)
+
+(export_synonym the_meltcallcount melt_callcount
+  :doc #{$THE_MELTCALLCOUNT is obsolete for $MELT_CALLCOUNT}#)
+
+(export_synonym foreach_in_list foreach_pair_component_in_list
+  :doc #{$FOREACH_IN_LIST is obsolete for $FOREACH_PAIR_COMPONENT_IN_LIST}#)
+;; we predefine :true as the TRUE. Currently no handcoded C function
+;; uses it, but perhaps that could change!!
+
+(let ( ( truekeyword :true) )
+  (code_chunk storetruekeyword #{MELT_STORE_PREDEF(TRUE, (melt_ptr_t) $TRUEKEYWORD)}#))
+
+
+;; support for named_symbol hook
+
+;;;;
+(defciterator block_signals
+  ()
+  blksignal
+  ()
+  :doc #{The $BLOCK_SIGNALS C-iterator provides a sequence inside
+which signals are not handled. It could be dynamically nested.}# 
+  #{ /* block_signals $BLKSIGNAL start */
+     long $BLKSIGNAL#_lev = melt_blocklevel_signals;
+     melt_blocklevel_signals = $BLKSIGNAL#_lev + 1;
+  }#
+  #{ /* block_signals $BLKSIGNAL end */
+     melt_blocklevel_signals = $BLKSIGNAL#_lev;
+     MELT_CHECK_SIGNAL();
+  }#
+)
+
+;; primitive to ignore a value
+(defprimitive ignore (v) :void
+  :doc #{Ignore the value passed as argument.  Useful to avoid
+  translation warnings, or to force the type of a conditional. See
+  $CTYPE_VOID.}# 
+#{/*ignore*/(void)($V)}#)
+
+
+;; primitive to return a void
+(defprimitive void () :void 
+  :doc #{Return a void value. See $IGNORE and $CTYPE_VOID.}#
+#{/*void*/(void)0}#)
+
+
+;;;====================================================================
+;;;***************** get or create a named symbol *********************
+;; hook used at many places, including the MELT reader.
+
+
+(defhook hook_named_symbol (:cstring nam :long create) () :value
+  :predef HOOK_NAMED_SYMBOL
+  :doc #{hook to get a symbol of name $NAM and perhaps create it iff
+$CREATE is true i.e. non zero.}#
+  (if (not (cstring_non_empty nam))
+      (return ()))
+  (block_signals
+   ()
+   ()
+   (let ( (sydict (get_field :sysdata_symboldict initial_system_data))
+	 (symbv ())
+	 (namev ())
+	 )
+     (assert_msg "check sydict" (is_mapstring sydict) sydict)
+     (code_chunk 
+      namedsym_chk 
+      #{ /* hook_named_symbol $NAMEDSYM_CHK start */
+        char tinybuf_$NAMEDSYM_CHK[128];
+        char* xstr_$NAMEDSYM_CHK = NULL;
+        int namlen_$NAMEDSYM_CHK = strlen ($NAM);
+        int ix_$NAMEDSYM_CHK = 0;
+        char* namdup_$NAMEDSYM_CHK = NULL;
+        if (strlen($NAM) < sizeof(tinybuf_$NAMEDSYM_CHK)-1)
+           {
+    	     strcpy (tinybuf_$NAMEDSYM_CHK, $NAM);
+    	     namdup_$NAMEDSYM_CHK = tinybuf_$NAMEDSYM_CHK;
+    	  }
+        else 
+           {
+    	     xstr_$NAMEDSYM_CHK = (char*) xcalloc (namlen_$NAMEDSYM_CHK + 1, 1);
+    	     strcpy (xstr_$NAMEDSYM_CHK, $NAM);
+    	     namdup_$NAMEDSYM_CHK = xstr_$NAMEDSYM_CHK;
+    	  }
+        /* uppercase the name in $NAMEDSYM_CHK */
+        for (ix_$NAMEDSYM_CHK = 0;
+             ix_$NAMEDSYM_CHK < namlen_$NAMEDSYM_CHK;
+    	    ix_$NAMEDSYM_CHK++)
+          if (ISALPHA(namdup_$NAMEDSYM_CHK[ix_$NAMEDSYM_CHK]))
+             namdup_$NAMEDSYM_CHK[ix_$NAMEDSYM_CHK] 
+    	      = TOUPPER (namdup_$NAMEDSYM_CHK[ix_$NAMEDSYM_CHK]);
+        /* get the symbol if any in $NAMEDSYM_CHK */
+        $SYMBV = melt_get_mapstrings ((struct meltmapstrings_st *) $SYDICT,
+    				     namdup_$NAMEDSYM_CHK);
+        if (!$SYMBV && $CREATE) /* should create symbol  $NAMEDSYM_CHK */
+          {
+            $NAMEV = meltgc_new_string ((meltobject_ptr_t) MELT_PREDEF (DISCR_STRING),
+    				       namdup_$NAMEDSYM_CHK);
+	    $(progn
+	       (setq symbv (instance class_symbol :named_name namev))
+	       (mapstring_putstr sydict namev symbv)
+	       (void))
+          } /* end if should create symbol in hook_named_symbol $NAMEDSYM_CHK */
+        /* epilog of $NAMEDSYM_CHK in hook_named_symbol */
+        if (xstr_$NAMEDSYM_CHK)
+          free (xstr_$NAMEDSYM_CHK);
+        xstr_$NAMEDSYM_CHK = NULL;
+        namdup_$NAMEDSYM_CHK = NULL;
+      /* hook_named_symbol $NAMEDSYM_CHK end */
+      }#)
+     (return symbv)
+  ))
+)
+;; end hook_named_symbol
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defhook hook_named_keyword (:cstring nam :long create) () :value
+  :predef HOOK_NAMED_KEYWORD
+  :doc #{hook to get a keyword of name $NAM and perhaps create it iff
+$CREATE is true i.e. non zero.}#
+  (if (not (cstring_non_empty nam))
+      (return ()))
+  (block_signals
+   ()
+   ()
+   (let ( (kwdict (get_field :sysdata_keywdict initial_system_data))
+	 (keywv ())
+	 (namev ())
+	 )
+     (assert_msg "check kwdict" (is_mapstring kwdict) kwdict)
+     (code_chunk 
+      namedkeyw_chk 
+      #{ /* hook_named_keyword $NAMEDKEYW_CHK start */
+      char tinybuf_$NAMEDKEYW_CHK[80];
+      char* xstr_$NAMEDKEYW_CHK = NULL;
+      int namlen_$NAMEDKEYW_CHK = 0;
+      int ix_$NAMEDKEYW_CHK = 0;
+        char* namdup_$NAMEDKEYW_CHK = NULL;
+      if ($NAM[0] == ':') 
+        $NAM++;
+      namlen_$NAMEDKEYW_CHK = strlen ($NAM);
+      memset (tinybuf_$NAMEDKEYW_CHK, 0, sizeof(tinybuf_$NAMEDKEYW_CHK));
+      if (namlen_$NAMEDKEYW_CHK < (int) sizeof(tinybuf_$NAMEDKEYW_CHK)-2) 
+        {
+          strncpy (tinybuf_$NAMEDKEYW_CHK, $NAM, sizeof(tinybuf_$NAMEDKEYW_CHK)-1);
+          namdup_$NAMEDKEYW_CHK = tinybuf_$NAMEDKEYW_CHK;
+        } 
+      else 
+        {
+          xstr_$NAMEDKEYW_CHK = (char*) xcalloc (namlen_$NAMEDKEYW_CHK + 1, 1);
+	  strcpy (xstr_$NAMEDKEYW_CHK, $NAM);
+          namdup_$NAMEDKEYW_CHK = xstr_$NAMEDKEYW_CHK;
+        };
+      /* normalize as uppercase namdup_$NAMEDKEYW_CHK */
+      for (ix_$NAMEDKEYW_CHK = 0; 
+	   ix_$NAMEDKEYW_CHK < namlen_$NAMEDKEYW_CHK;
+	   ix_$NAMEDKEYW_CHK++)
+        if (ISALPHA (namdup_$NAMEDKEYW_CHK[ix_$NAMEDKEYW_CHK]))
+	  namdup_$NAMEDKEYW_CHK[ix_$NAMEDKEYW_CHK]
+            = TOUPPER (namdup_$NAMEDKEYW_CHK[ix_$NAMEDKEYW_CHK]);
+      /* get the keyword if any for $NAMEDKEYW_CHK */
+      $KEYWV = melt_get_mapstrings ((struct meltmapstrings_st *) $KWDICT,
+    				     namdup_$NAMEDKEYW_CHK);
+      if (!$KEYWV && $CREATE) /* should create keyword $NAMEDKEYW_CHK */
+        {
+            $NAMEV = 
+	      meltgc_new_string ((meltobject_ptr_t) MELT_PREDEF (DISCR_STRING),
+    				       namdup_$NAMEDKEYW_CHK);
+	    $(progn
+	       (setq keywv (instance class_keyword :named_name namev))
+	       (mapstring_putstr kwdict namev keywv)
+	       (void))
+	}
+        if (xstr_$NAMEDKEYW_CHK)
+          free (xstr_$NAMEDKEYW_CHK);
+        xstr_$NAMEDKEYW_CHK = NULL;
+        namdup_$NAMEDKEYW_CHK = NULL;
+      /* hook_named_keyword $NAMEDKEYW_CHK end */
+      }#)
+     (return keywv)
+     )
+   ))
+     
+     
+     
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defhook hook_intern_symbol (:value symbv) () :value
+  :predef HOOK_INTERN_SYMBOL
+  :doc #{Intern and return the given symbol $SYMBV if it is new, or
+  return the previous old symbol of same name.}#
+  (if (and 
+       (is_a symbv class_symbol)
+       (is_not_a symbv class_keyword))
+      (let ( (syname (unsafe_get_field :named_name symbv))
+	     (sydict (get_field :sysdata_symboldict initial_system_data))
+	     (oldsy (mapstring_getstr sydict syname))
+	     )
+	(if (is_object oldsy)
+	    (setq symbv oldsy)
+	  (mapstring_putstr sydict syname symbv))
+	(code_chunk 
+	 dbgintern_chk
+	 #{ /* hook_intern_symbol $DBGINTERN_CHK */
+#if MELT_HAVE_DEBUG
+	 static long count;
+         const char* namestr = melt_string_str((melt_ptr_t)$SYNAME);
+	 count++;
+	 debugeprintf ("@+hook_intern_symbol #%ld name '%s' @%p H%x", 
+		      count, namestr, 
+		      (void*)$SYMBV, melt_obj_hash ((melt_ptr_t) $SYMBV));
+#endif /*MELT_HAVE_DEBUG*/
+	 }#)
+	(return symbv))
+    (return ())))	    
+
+;;;;;;;;;;;;;;;;
+(defhook hook_intern_keyword (:value keywv) () :value
+  :predef HOOK_INTERN_KEYWORD
+  :doc #{Intern and return the given keyword $KEYWV if it is new, or
+  return the previous old keyword of same name.}#
+  (if (is_a keywv class_keyword)
+      (let ( (keyname (unsafe_get_field :named_name keywv))
+	     (kwdict (get_field :sysdata_keywdict initial_system_data))
+	     (oldkw (mapstring_getstr kwdict keyname))
+	     )
+	(if (is_object oldkw)
+	    (setq keywv oldkw)
+	  (mapstring_putstr kwdict keyname keywv))
+	(return keywv))
+    (return ())))
+
+
+;; primitive to clone a value with another discriminant.
+(defprimitive clone_with_discriminant (val discr) :value
+  :doc #{Clone value $VAL with new discriminant $DISCR. Gives the
+  original $VAL when cloning is not possible. For objects, make a new
+  one copying the common fields. See the $VALDESC_CLONECHUNK field in
+  $CLASS_VALUE_DESCRIPTOR. The primitive's code is generated.}#
+  #{ meltgc_clone_with_discriminant((melt_ptr_t)($VAL), (melt_ptr_t)($DISCR)) }#)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(export_values
+ block_signals
+ clone_with_discriminant
+ hook_intern_keyword
+ hook_intern_symbol
+ hook_named_keyword 
+ hook_named_symbol
+ ignore
+ void
+)
+
+
+
+;;;;;hooks for environment management are so fondamental that they
+;;;;;have to be in warmelt-first.melt
+
+;;;====================================================================
+;;;************************* symbol importer ***************************
+;; Should be used in code emitted by compile2obj_initproc for its importvalues
+ (defhook hook_symbol_importer (:cstring symnamestr modulenamestr :value parenv) 
+  () 
+  :value
+  :predef HOOK_SYMBOL_IMPORTER
+  :doc #{$HOOK_SYMBOL_IMPORTER is an internal hook to import a symbol at start of a module.}#
+  (when (not (cstring_non_empty symnamestr))
+    (code_chunk errornosymb_chk
+		#{ /* hook_symbol_importer $ERRORNOSYMB_CHK */
+		error ("MELT importing symbol without symbol name");
+		}#)
+    (return ()))
+  (when (not (cstring_non_empty modulenamestr))
+    (code_chunk errornomodule_chk
+		#{ /* hook_symbol_importer $ERRORNOMODULE_CHK */
+		error ("MELT importing symbol %s without module name", 
+		       $SYMNAMESTR);
+		}#)
+    (return ()))
+  (let ( (symb (get_raw_symbol symnamestr))
+	 (symbnamev (get_field :named_name symb))
+	 )
+    (when (null symb)
+      ;; we are getting a spurious warning on MELT_MAKE_SEXPR; dirty
+      ;; and shameful kludge to avoid showing it.
+      (code_chunk warningnosymb_chk 
+                  #{ /* start hook_symbol_importer $WARNINGNOSYMB_CHK */
+                  if (melt_flag_bootstrapping 
+                      || strncmp($MODULENAMESTR, "warmelt-", sizeof("warmelt-")-1)) 
+                    {
+                      warning (0, "MELT importing unknown symbol %s in module %s", 
+                                  $SYMNAMESTR, $MODULENAMESTR)  ;
+ #if MELT_HAVE_DEBUG
+                      melt_dbgshortbacktrace("MELT importing unknown symbol", 16);
+ #endif /* MELT_HAVE_DEBUG */
+                    };
+                  /* end hook_symbol_importer $WARNINGNOSYMB_CHK */
+                  }#)
+      (return ()))
+    ;; error if importing a non symbol
+    (assert_msg "check symb" (is_a symb class_symbol) symb)
+    ;; error if importing from a non environment
+    (if (is_not_a parenv class_environment)
+	(let ( (pardiscr (discrim parenv))
+	       (pardiscnam (get_field :named_name pardiscr))
+	       )
+	  (shortbacktrace_dbg "hook_symbol_importer" 10)
+	  (code_chunk 
+	   errparenv_chk
+	   #{ /* hook_symbol_importer $ERRPARENV_CHK */
+	   if ($PARENV)
+	   error ("MELT [%s]: imported symbol %s with bad parent environment of discriminant %s",
+		  $MODULENAMESTR, $SYMNAMESTR, melt_string_str ((melt_ptr_t)$PARDISCNAM)) ;
+	   else
+	   error  ("MELT [%s]: imported symbol %s without bad parent environment",
+		   $MODULENAMESTR, $SYMNAMESTR) ;
+	   }#)
+	  (return ())))
+    ;;
+    (assert_msg "check parenv" (is_a parenv class_environment) parenv)
+    (let ( (valbind (find_env parenv symb))
+	   (bindiscr (discrim valbind))
+	   (bindiscrnam (get_field :named_name discrim))
+	   )
+      (when (is_not_a valbind class_value_binding)
+	(code_chunk errbadimport 
+		    #{ /* hook_symbol_importer $ERRBADIMPORT start */ {
+		    const char* $ERRBADIMPORT#_str = melt_string_str ((melt_ptr_t)$SYMBNAMEV) ;
+		    error ("MELT [%s]: imported symbol %s has unexpected binding of %s",
+			   $MODULENAMESTR,
+			   $ERRBADIMPORT#_str?$ERRBADIMPORT#_str:$SYMNAMESTR,
+			   melt_string_str ((melt_ptr_t)$BINDISCRNAM)) ;
+		    } /* hook_symbol_importer $ERRBADIMPORT end */ }#)
+	(return ())
+	)
+      (assert_msg "check valbind" (is_a valbind class_value_binding) valbind)
+      (return (unsafe_get_field :vbind_value valbind))
+      )))
+
+
+
+
+;;;====================================================================
+;;;************************* value exporter ***************************
+
+(defhook hook_value_exporter (:value sym val contenv) 
+  ()
+  :void
+  :predef HOOK_VALUE_EXPORTER 
+  :doc #{$HOOK_VALUE_EXPORTER is an internal hook to export values from modules. 
+  See also $EXPORT_VALUES macro.}#
+  (when (null contenv)
+    (warningmsg_strv "exporting value too early with null environment container" 
+		     (unsafe_get_field :named_name sym))
+    (return))
+  (assert_msg "check sym" (is_a sym class_symbol) sym)
+  (assert_msg "check contenv" (is_a contenv class_reference) contenv)
+  (let ( (env (unsafe_get_field :referenced_value contenv)) 
+	 (symname (unsafe_get_field :named_name sym))
+	 )
+    (assert_msg "check symname" (is_string symname) symname)
+    (when (null env)
+      (code_chunk 
+       nullenv_chk 
+       #{ /* hook_value_exporter $NULLENV_CHK */
+       melt_fatal_error ("exporting value named %s failed with null environment",
+			 melt_string_str ((melt_ptr_t)$SYMNAME));
+       }#)
+      (return))
+    (assert_msg "check good env" (is_a env class_environment) env)
+    (let (
+	  (parenv (get_field :env_prev env))
+	  (prevbind (if parenv (find_env parenv sym)))
+	  (valbind (instance
+		    class_value_binding
+		    :binder sym
+		    :vbind_value val
+		    )) 
+	  )
+      (cond 
+       ( (null prevbind) () )
+       ( (and 
+	  (is_a prevbind class_selector_binding)
+	  (is_a val class_selector))
+	 (warningmsg_strv "not exporting previous bound selector" symname)
+	 (return))
+       ( (and
+	  (is_a prevbind class_instance_binding)
+	  (is_object val))
+	 (warningmsg_strv "not exporting previous bound instance" symname)
+	 (return))
+       ( (and
+	  (is_a prevbind class_primitive_binding)
+	  (is_a val class_primitive))
+	 (warningmsg_strv "not exporting previous bound primitive" symname)
+	 (return))
+       ( (and
+	  (is_a prevbind class_function_binding)
+	  (is_closure val))
+	 (warningmsg_strv "not exporting previous bound function" symname)
+	 (return))
+       ( (and
+	  (is_a prevbind class_class_binding)
+	  (is_a val class_class))
+	 (warningmsg_strv "not exporting previous bound class" symname)
+	 (return))
+       ( (and
+	  (is_a prevbind class_field_binding)
+	  (is_a val class_class))
+	 (warningmsg_strv "not exporting previous bound field" symname)
+	 (return)
+	 )
+       ( (and
+	  (is_a prevbind class_instance_binding)
+	  (is_object val))
+	 (warningmsg_strv "not exporting previous bound instance" symname)
+	 (return)
+	 )
+       (  (is_a prevbind class_value_binding)
+	  (let ( (preval (unsafe_get_field :vbind_value prevbind))
+		 (prevdiscr (discrim preval))
+		 (curdiscr (discrim val))
+		 )
+	    (if (== prevdiscr curdiscr)
+		(progn
+		  (warningmsg_strv "not exporting previous bound homogenous value" symname)
+		  (warningmsg_strv "common value discrim" 
+				   (unsafe_get_field :named_name prevdiscr))
+		  (return)))
+	    ))
+       )
+      (assert_msg "check valbind" (is_a valbind class_any_binding) valbind)
+      (put_env env valbind)
+      (return)
+      )))
+
+
+
+;;;====================================================================
+;;;************************* macro exporter ***************************
+
+(defhook hook_macro_exporter (:value sym val contenv) 
+  ()
+  :void
+  :predef HOOK_MACRO_EXPORTER
+  (assert_msg "check sym" (is_a sym class_symbol) sym)
+  (when (null contenv)
+    (warningmsg_strv "exporting macro too early with null environment container" 
+		     (unsafe_get_field :named_name sym))
+    (return))
+  (assert_msg "check contenv" (is_a contenv class_reference) contenv)
+  (let ( (env (unsafe_get_field :referenced_value contenv)) 
+	 (symname (unsafe_get_field :named_name sym))
+	 )
+    (assert_msg "check symname" (is_string symname) symname)
+    (when (null env)
+      (code_chunk 
+       nullenv_chk 
+       #{ /* hook_macro_exporter $NULLENV_CHK */
+       melt_fatal_error ("exporting macro named %s failed with null environment",
+			 melt_string_str ((melt_ptr_t)$SYMNAME)) ;
+       }#)
+      (return)
+      )
+    (assert_msg "check env" (is_a env class_environment) env)
+    (assert_msg "check val is closure" (is_closure val) val)
+    (let (
+	  (newclo (clone_with_discriminant val discr_macro_closure))
+	  (macbind (instance
+		     class_macro_binding
+		     :binder sym
+		     :mbind_expanser val))
+	   )
+      (put_env env macbind)
+      (return)
+      )))
+
+
+;;;====================================================================
+;;;*********************** patmacro exporter **************************
+
+(defhook hook_patmacro_exporter (:value sym macval patval contenv) 
+  ()
+  :void
+  :predef HOOK_PATMACRO_EXPORTER
+  :doc #{$HOOK_PATMACRO_EXPORTER is an internal hook to export pattern-macros. 
+See also $EXPORT_PATMACRO}#
+  (assert_msg "check sym" (is_a sym class_symbol) sym)
+  (when (null contenv)
+    (warningmsg_strv "exporting patmacro too early with null environment container" 
+		     (unsafe_get_field :named_name sym))
+    (return)
+    )
+  (assert_msg "check contenv" (is_a contenv class_reference) contenv)
+  (let ( (env (unsafe_get_field :referenced_value contenv)) )
+    (when (null env)
+      (informsg_strv "exporting patmacro too early with null environment"
+		     (unsafe_get_field :named_name sym))
+      (return)
+      )
+    (assert_msg "check env" (is_a env class_environment) env)
+    (assert_msg "check macval is closure" (is_closure macval) macval)
+    (assert_msg "check patval is closure" (is_closure patval) patval)
+    (let ( (macbind (instance
+		     class_patmacro_binding
+		     :binder sym
+		     :mbind_expanser macval
+		     :patbind_expanser patval))
+	   )
+      (put_env env macbind)
+      (return)
+)))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(export_values 
+ hook_fresh_environment_reference_maker
+ hook_macro_exporter
+ hook_patmacro_exporter
+ hook_value_exporter
+ hook_symbol_importer
+ )
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; eof warmelt-first.melt

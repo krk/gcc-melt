@@ -1,0 +1,26 @@
+; -*- lisp -*-
+;; file ttuplist.melt
+
+#| run in buildir/gcc
+ ln -sv $GCCMELT_SOURCE/gcc/testsuite/melt/ttuplist.melt
+ ./cc1 -fmelt-mode=rundebug @meltbuild-common.args \
+    -fmelt-keep-temporary-files \
+    -fmelt-init=@warmelt.quicklybuilt \
+    -fmelt-arg=ttuplist.melt \
+    -fmelt-debug meltbuild-empty-file.c
+|#
+
+
+(defun ftuple (x y z)
+       (tuple x y  z))
+(debug  "test ftuple=" (ftuple 'xx 'yy 'zz))
+
+
+(defun flist3 (x y z) (list x y z))
+(debug  "test flist3=" (flist3 'xxx 'yyy 'zzz))
+
+(defun flistu (u v w)
+       (list u v (tuple u w)))
+(debug  "test flistu=" (flistu 'uu 'vv 'ww))
+
+;;eof ttuplist.melt

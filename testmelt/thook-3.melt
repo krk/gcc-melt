@@ -1,0 +1,31 @@
+; -*- lisp -*-
+;; file thook-3.melt
+
+#| run in buildir/gcc
+ ln -s $GCCMELT_SOURCE/gcc/testsuite/melt/thook-3.melt
+ ./cc1 -fmelt-mode=rundebug @meltbuild-common.args \
+    -fmelt-keep-temporary-files \
+    -fmelt-init=@warmelt.quicklybuilt \
+    -fmelt-arg=thook-3.melt \
+    -fmelt-debug meltbuild-empty-file.c
+|#
+
+(defhook quoting_hook (:long i) () :void
+  (let ( (q1 '1) 
+	 )
+    (debug "in quoting_hook q1=" q1)
+    (assert_msg "check q1" (is_integerbox q1)))
+)
+
+(debug "quoting_hook =" quoting_hook)
+(debug "quoting_hook data: " (hook_data quoting_hook))
+
+(code_chunk 
+ doqhook_chk 
+ #{ /* $DOQHOOK_CHK */
+   long $DOQHOOK_CHK =0;
+   debugeprintf("$DOQHOOK_CHK= %ld before doing hook", $DOQHOOK_CHK);
+   melthook_QUOTING_HOOK($QUOTING_HOOK, $DOQHOOK_CHK);
+   debugeprintf("$DOQHOOK_CHK= %ld after doing hook", $DOQHOOK_CHK);
+ }#)
+;; eof thook-3.melt
